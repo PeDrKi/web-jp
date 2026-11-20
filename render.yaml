@@ -1,0 +1,28 @@
+# Blueprint Render: tạo Web Service miễn phí chạy cả backend + giao diện.
+# Dữ liệu nằm ở Supabase (Postgres + Storage), vì ổ đĩa của Render free bị xóa mỗi lần khởi động lại.
+services:
+  - type: web
+    name: web-jp
+    runtime: node
+    plan: free
+    region: singapore          # chọn cùng khu vực với project Supabase để nhanh hơn
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/me
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_SECRET          # khóa ký phiên đăng nhập, Render tự sinh
+        generateValue: true
+      - key: DATABASE_URL        # Supabase > Connect > Session pooler
+        sync: false
+      - key: SUPABASE_URL        # https://<project>.supabase.co
+        sync: false
+      - key: SUPABASE_SERVICE_KEY  # Supabase > Project Settings > API Keys > secret / service_role
+        sync: false
+      - key: SEED_ON_EMPTY       # lần đầu chạy: tự nạp dữ liệu mẫu nếu CSDL trống
+        value: "1"
+      - key: SEED_PASSWORD       # mật khẩu cho 5 tài khoản mẫu (tự đặt, đừng dùng mật khẩu mặc định)
+        sync: false

@@ -536,9 +536,10 @@ router.post('/grading/:id', A.requireRole('admin', 'editor', 'teacher'), wrap(as
 }));
 
 // ---------------- Người dùng (AD-08) - chỉ quản trị viên ----------------
+const ROLES_ALL = ['learner', 'teacher', 'editor', 'reviewer', 'admin'];
 router.get('/users', A.requireRole('admin'), wrap(async (req, res) => {
   const q = String(req.query.q || '').toLowerCase();
-  const rows = (await db.prepare('SELECT id,email,name,role,locked,plan,created_at FROM users ORDER BY id DESC').all()).filter((u) => !q || (u.email + u.name).toLowerCase().includes(q));
+  const rows = (await db.prepare("SELECT id,email,name,role,locked,plan,created_at,last_login,(pass_hash<>'') AS has_password,(google_sub IS NOT NULL) AS google FROM users ORDER BY id DESC").all()).filter((u) => !q || (u.email + u.name).toLowerCase().includes(q));
   res.json(rows);
 }));
 router.patch('/users/:id', A.requireRole('admin'), wrap(async (req, res) => {
@@ -546,10 +547,38 @@ router.patch('/users/:id', A.requireRole('admin'), wrap(async (req, res) => {
   if (id === req.user.id && (req.body?.locked || (req.body?.role && req.body.role !== 'admin'))) return bad(res, 'Không thể tự khóa hoặc hạ quyền chính mình.', 409);
   const u = (await db.prepare('SELECT * FROM users WHERE id=?').get(id));
   if (!u) return bad(res, 'Không tìm thấy.', 404);
-  const role = ['learner', 'teacher', 'editor', 'reviewer', 'admin'].includes(req.body?.role) ? req.body.role : u.role;
+  const role = ROLES_ALL.includes(req.body?.role) ? req.body.role : u.role;
   const plan = ['free', 'pro'].includes(req.body?.plan) ? req.body.plan : u.plan;
   const locked = req.body && 'locked' in req.body ? (req.body.locked ? 1 : 0) : u.locked;
   (await db.prepare('UPDATE users SET role=?, plan=?, locked=? WHERE id=?').run(role, plan, locked, id));
+  res.json({ ok: true });
+}));
+
+// Quản trị viên tạo tài khoản (giảng viên, biên tập... hoặc học viên của trung tâm)
+const Acc = require('./account');
+router.post('/users', A.requireRole('admin'), wrap(async (req, res) => {
+  const b = req.body || {};
+  const em = String(b.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(em)) return bad(res, 'Email không hợp lệ.');
+  if (await db.prepare('SELECT 1 FROM users WHERE email=?').get(em)) return bad(res, 'Email này đã có tài khoản.', 409);
+  const role = ROLES_ALL.includes(b.role) ? b.role : 'learner';
+  const pw = String(b.password || '');
+  if (pw) { const pp = A.passwordProblem(pw, em); if (pp) return bad(res, pp); }
+  const r = await db.prepare('INSERT INTO users(email,name,pass_hash,role,created_at) VALUES(?,?,?,?,?)')
+    .run(em, String(b.name || '').trim().slice(0, 60) || em.split('@')[0], pw ? A.hashPassword(pw) : '', role, now());
+  // Không đặt mật khẩu: tạo link (hạn 7 ngày) để người dùng tự đặt mật khẩu lần đầu
+  const link = pw ? null : await Acc.makeResetLink(req, r.lastInsertRowid, 24 * 7, req.user.id);
+  res.json({ id: r.lastInsertRowid, link });
+}));
+router.post('/users/:id/reset-link', A.requireRole('admin'), wrap(async (req, res) => {
+  const u = await db.prepare('SELECT id, locked FROM users WHERE id=?').get(Number(req.params.id));
+  if (!u) return bad(res, 'Không tìm thấy.', 404);
+  if (u.locked) return bad(res, 'Tài khoản đang bị khóa, hãy mở khóa trước.', 409);
+  res.json({ link: await Acc.makeResetLink(req, u.id, 24, req.user.id), hours: 24 });
+}));
+router.post('/users/:id/logout-all', A.requireRole('admin'), wrap(async (req, res) => {
+  const r = await db.prepare('UPDATE users SET token_ver=token_ver+1 WHERE id=?').run(Number(req.params.id));
+  if (!r.changes) return bad(res, 'Không tìm thấy.', 404);
   res.json({ ok: true });
 }));
 
@@ -575,6 +604,39 @@ router.post('/media', A.requireRole(...AUTHORS), express.raw({ type: '*/*', limi
     m = (await db.prepare('SELECT * FROM media WHERE sha256=?').get(sha));
   }
   res.json({ id: m.id, url: mediaUrl(m), filename: m.filename, mime: m.mime, reused });
+}));
+// Tải thẳng lên Supabase: (1) xin URL ký sẵn, (2) trình duyệt PUT file lên đó, (3) báo hoàn tất để ghi vào kho.
+// Không cấu hình Supabase thì trả mode 'server' để trình duyệt gửi file qua POST /media như cũ.
+const MAX_MEDIA = 50 * 1024 * 1024;
+async function mediaInfo(req, res) {
+  const b = req.body || {};
+  const name = String(b.filename || 'file').replace(/[^\w.\-぀-ヿ一-龯 ]/g, '_').slice(0, 100);
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const sha = String(b.sha256 || '').toLowerCase(); const size = Number(b.size);
+  if (!MIME[ext]) { bad(res, 'Chỉ nhận file mp3, wav, m4a, ogg, png, jpg, webp.', 415); return null; }
+  if (!/^[0-9a-f]{64}$/.test(sha) || !(size > 0)) { bad(res, 'Thông tin file không hợp lệ.'); return null; }
+  if (size > MAX_MEDIA) { bad(res, 'File quá lớn (tối đa 50 MB).', 413); return null; }
+  return { name, ext, sha, size, p: `${sha.slice(0, 24)}.${ext}` };
+}
+const mediaOut = (m, reused) => ({ id: m.id, url: mediaUrl(m), filename: m.filename, mime: m.mime, reused });
+router.post('/media/sign', A.requireRole(...AUTHORS), wrap(async (req, res) => {
+  const f = await mediaInfo(req, res); if (!f) return;
+  const m = await db.prepare('SELECT * FROM media WHERE sha256=?').get(f.sha);
+  if (m) return res.json({ mode: 'done', ...mediaOut(m, true) });
+  if (!Store.remote) return res.json({ mode: 'server' });
+  try { res.json({ mode: 'direct', upload_url: await Store.signUpload(f.p), mime: MIME[f.ext] }); }
+  catch (e) { console.error(e.message); bad(res, 'Không kết nối được kho lưu trữ. Kiểm tra cấu hình Supabase Storage.', 502); }
+}));
+router.post('/media/commit', A.requireRole(...AUTHORS), wrap(async (req, res) => {
+  const f = await mediaInfo(req, res); if (!f) return;
+  if (!Store.remote) return bad(res, 'Chưa cấu hình Supabase Storage.');
+  let m = await db.prepare('SELECT * FROM media WHERE sha256=?').get(f.sha);
+  if (m) return res.json(mediaOut(m, true));
+  const got = await Store.stat(f.p).catch(() => null);
+  if (got === null) return bad(res, 'Chưa thấy file trên kho lưu trữ, hãy tải lại.', 409);
+  const r = await db.prepare('INSERT INTO media(sha256,filename,mime,size,path,url,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(sha256) DO NOTHING').run(f.sha, f.name, MIME[f.ext], got || f.size, f.p, Store.publicUrl(f.p), now());
+  m = await db.prepare('SELECT * FROM media WHERE sha256=?').get(f.sha);
+  res.json(mediaOut(m, !r.lastInsertRowid));
 }));
 router.get('/media', wrap(async (_req, res) => res.json((await db.prepare('SELECT id,filename,mime,size,path,url,created_at FROM media ORDER BY id DESC LIMIT 200').all()).map((m) => ({ ...m, url: mediaUrl(m) })))));
 

@@ -6,6 +6,16 @@ process.env.DATA_DIR = tmp; process.env.UPLOAD_DIR = path.join(tmp, 'up');
 // Kiểm thử XÓA SẠCH dữ liệu: chỉ chạy trên Postgres riêng cho kiểm thử (TEST_DATABASE_URL), mặc định dùng PGlite trong thư mục tạm
 if (process.env.TEST_DATABASE_URL) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL; else delete process.env.DATABASE_URL;
 delete process.env.SUPABASE_URL;   // kiểm thử lưu file trên ổ đĩa tạm
+// Giả lập Google và Brevo (không gọi mạng thật)
+process.env.GOOGLE_CLIENT_ID = 'test-client'; process.env.BREVO_API_KEY = 'test'; process.env.MAIL_FROM = 'no-reply@test.vn';
+const mails = []; let googleInfo = null;
+const realFetch = global.fetch;
+global.fetch = async (url, o = {}) => {
+  const u = String(url);
+  if (u.startsWith('https://api.brevo.com/')) { mails.push(JSON.parse(o.body)); return new Response('{"messageId":"x"}', { status: 201 }); }
+  if (u.startsWith('https://oauth2.googleapis.com/tokeninfo')) return googleInfo ? new Response(JSON.stringify(googleInfo), { status: 200 }) : new Response('{}', { status: 400 });
+  return realFetch(url, o);
+};
 execFileSync('node', [path.join(__dirname, '..', 'seed', 'seed.js'), '--reset'], { env: process.env, stdio: 'pipe' });
 const app = require('../server');
 let pass = 0, fail = 0;
@@ -168,6 +178,12 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('ed', 'POST', '/admin/media', png, { 'content-type': 'application/octet-stream', 'x-filename': 'a.png' }); const m1 = r.d; ok(r.s === 200 && !m1.reused, 'tải ảnh lên');
   r = await call('ed', 'POST', '/admin/media', png, { 'content-type': 'application/octet-stream', 'x-filename': 'copy.png' }); ok(r.d.reused && r.d.url === m1.url, 'tải lại cùng file → dùng lại, không lưu trùng');
   r = await call('ed', 'POST', '/admin/media', Buffer.from('<script>'), { 'content-type': 'application/octet-stream', 'x-filename': 'x.html' }); ok(r.s === 415, 'từ chối loại file không cho phép');
+  const shaPng = require('crypto').createHash('sha256').update(png).digest('hex');
+  r = await call('ed', 'POST', '/admin/media/sign', { filename: 'b.png', size: png.length, sha256: shaPng }); ok(r.s === 200 && r.d.mode === 'done' && r.d.url === m1.url, 'xin URL tải lên cho file đã có → dùng lại ngay');
+  r = await call('ed', 'POST', '/admin/media/sign', { filename: 'n.mp3', size: 100, sha256: 'a'.repeat(64) }); ok(r.s === 200 && r.d.mode === 'server', 'không có Supabase → tải qua máy chủ');
+  r = await call('ed', 'POST', '/admin/media/sign', { filename: 'n.mp3', size: 100, sha256: 'xyz' }); ok(r.s === 400, 'mã băm không hợp lệ bị từ chối');
+  r = await call('ed', 'POST', '/admin/media/sign', { filename: 'n.exe', size: 100, sha256: 'a'.repeat(64) }); ok(r.s === 415, 'xin URL cho loại file cấm bị từ chối');
+  r = await call('u', 'POST', '/admin/media/sign', { filename: 'n.mp3', size: 100, sha256: 'a'.repeat(64) }); ok(r.s === 403, 'học viên không tải media được');
   r = await call('ed', 'GET', '/admin/users'); ok(r.s === 403, 'biên tập viên không quản lý được người dùng');
   r = await call('adm', 'GET', '/admin/users'); const lu = r.d.find((x) => x.email === 'a@b.vn');
   r = await call('adm', 'PATCH', `/admin/users/${lu.id}`, { locked: true }); ok(r.s === 200, 'khóa tài khoản');
@@ -282,6 +298,57 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('gv', 'DELETE', `/admin/questions/${impIds[0]}`); ok(r.s === 200, 'giảng viên xóa câu nháp của mình');
   // luyện tập ngẫu nhiên có câu tự luận
   r = await call('hv', 'POST', '/attempts', { practice: { level: 'N5', section: 'writing', count: 10 } }); ok(r.s === 200 && r.d.questions.every((q) => q.kind === 'essay'), 'luyện tập phần Viết / Tự luận');
+
+  console.log('Đăng ký / đăng nhập / mật khẩu');
+  r = await call('a1', 'POST', '/auth/register', { email: 'm@n.vn', password: 'chiconchu', name: 'M' }); ok(r.s === 400 && /chữ và số/.test(r.d.error), 'mật khẩu không có số bị từ chối');
+  r = await call('a1', 'POST', '/auth/register', { email: 'm@n.vn', password: 'matkhau123', website: 'spam.com' }); ok(r.s === 400, 'bot điền ô bẫy bị chặn');
+  r = await call('a1', 'POST', '/auth/register', { email: 'M@N.vn ', password: 'matkhau123', name: 'Minh' }); ok(r.s === 200 && r.d.email === 'm@n.vn' && r.d.has_password, 'đăng ký, email chuẩn hóa chữ thường');
+  r = await call('a2', 'POST', '/auth/login', { email: 'm@n.vn', password: 'matkhau123' }); ok(r.s === 200, 'đăng nhập ở thiết bị thứ hai');
+  r = await call('a1', 'POST', '/me/password', { current: 'sai12345', password: 'moimoi456' }); ok(r.s === 403, 'đổi mật khẩu: sai mật khẩu hiện tại bị từ chối');
+  r = await call('a1', 'POST', '/me/password', { current: 'matkhau123', password: 'moimoi456' }); ok(r.s === 200, 'đổi mật khẩu thành công');
+  r = await call('a1', 'GET', '/me'); ok(r.d?.email === 'm@n.vn', 'thiết bị vừa đổi mật khẩu vẫn đăng nhập');
+  r = await call('a2', 'GET', '/me'); ok(r.d === null, 'thiết bị khác bị đăng xuất sau khi đổi mật khẩu');
+  r = await call('a2', 'POST', '/auth/login', { email: 'm@n.vn', password: 'matkhau123' }); ok(r.s === 401, 'mật khẩu cũ không dùng được nữa');
+  r = await call('a2', 'POST', '/auth/login', { email: 'm@n.vn', password: 'moimoi456' }); ok(r.s === 200, 'đăng nhập bằng mật khẩu mới');
+  r = await call('a1', 'POST', '/auth/logout-all'); ok(r.s === 200, 'đăng xuất mọi thiết bị');
+  r = await call('a2', 'GET', '/me'); ok(r.d === null, 'mọi phiên đều hết hiệu lực');
+  r = await call('a3', 'GET', '/me', undefined, { cookie: 'sid=1.0.99999999999999.xxx' }); ok(r.d === null, 'cookie giả mạo không đăng nhập được');
+
+  r = await call('anon', 'GET', '/auth/config'); ok(r.d.email_reset === true && r.d.google_client_id === 'test-client', 'cấu hình đăng nhập công khai');
+  r = await call('anon', 'POST', '/auth/forgot', { email: 'khongco@x.vn' }); ok(r.s === 200 && mails.length === 0, 'quên mật khẩu với email lạ: trả lời như thường, không gửi thư');
+  r = await call('anon', 'POST', '/auth/forgot', { email: 'm@n.vn' }); ok(r.s === 200 && mails.length === 1 && mails[0].to[0].email === 'm@n.vn', 'gửi email đặt lại mật khẩu');
+  const tok = (mails[0].htmlContent.match(/dat-lai-mat-khau\?t=([\w-]+)/) || [])[1];
+  r = await call('anon', 'GET', '/auth/reset?t=' + tok); ok(r.s === 200 && r.d.email === 'm@n.vn', 'mở link đặt lại mật khẩu');
+  r = await call('anon', 'POST', '/auth/reset', { token: tok, password: 'ngan' }); ok(r.s === 400, 'mật khẩu mới yếu bị từ chối');
+  r = await call('a4', 'POST', '/auth/reset', { token: tok, password: 'datlai789' }); ok(r.s === 200 && r.d.email === 'm@n.vn', 'đặt lại mật khẩu và đăng nhập luôn');
+  r = await call('a4', 'POST', '/auth/reset', { token: tok, password: 'datlai000' }); ok(r.s === 410, 'link đặt lại chỉ dùng được một lần');
+  r = await call('a5', 'POST', '/auth/login', { email: 'm@n.vn', password: 'datlai789' }); ok(r.s === 200, 'đăng nhập bằng mật khẩu vừa đặt lại');
+  r = await call('anon', 'GET', '/auth/reset?t=abc'); ok(r.s === 410, 'link sai bị từ chối');
+
+  r = await call('ed', 'POST', '/admin/users', { email: 'gv9@x.vn', role: 'teacher' }); ok(r.s === 403, 'chỉ quản trị viên tạo tài khoản');
+  r = await call('adm', 'POST', '/admin/users', { email: 'gv9@x.vn', name: 'Cô Lan', role: 'teacher' }); ok(r.s === 200 && /dat-lai-mat-khau\?t=/.test(r.d.link), 'quản trị viên tạo tài khoản giảng viên, nhận link tự đặt mật khẩu');
+  const tok2 = r.d.link.split('t=')[1];
+  r = await call('a6', 'POST', '/auth/login', { email: 'gv9@x.vn', password: '' }); ok(r.s === 401, 'tài khoản chưa đặt mật khẩu không đăng nhập bằng mật khẩu rỗng');
+  r = await call('a6', 'POST', '/auth/reset', { token: tok2, password: 'giangvien9' }); ok(r.s === 200 && r.d.role === 'teacher', 'giảng viên tự đặt mật khẩu lần đầu');
+  r = await call('adm', 'POST', '/admin/users', { email: 'gv9@x.vn' }); ok(r.s === 409, 'không tạo trùng email');
+  r = await call('adm', 'POST', '/admin/users', { email: 'hv9@x.vn', password: 'hocvien999', role: 'learner' }); ok(r.s === 200 && !r.d.link, 'tạo tài khoản có sẵn mật khẩu');
+  const uid9 = r.d.id;
+  r = await call('a7', 'POST', '/auth/login', { email: 'hv9@x.vn', password: 'hocvien999' }); ok(r.s === 200, 'học viên đăng nhập bằng mật khẩu được cấp');
+  r = await call('adm', 'POST', `/admin/users/${uid9}/logout-all`); r = await call('a7', 'GET', '/me'); ok(r.d === null, 'quản trị viên đăng xuất người dùng khỏi mọi thiết bị');
+  r = await call('adm', 'POST', `/admin/users/${uid9}/reset-link`); ok(r.s === 200 && r.d.hours === 24, 'quản trị viên cấp link đặt lại mật khẩu');
+  r = await call('adm', 'GET', '/admin/users?q=hv9'); ok(r.d[0].last_login > 0 && r.d[0].has_password === true, 'danh sách người dùng có lần đăng nhập gần nhất');
+
+  googleInfo = { aud: 'test-client', iss: 'https://accounts.google.com', exp: String(Math.floor(Date.now() / 1000) + 600), sub: 'g-123', email: 'Google.User@gmail.com', email_verified: 'true', name: 'Google User' };
+  r = await call('g1', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && r.d.is_new && r.d.email === 'google.user@gmail.com' && r.d.google && !r.d.has_password, 'đăng nhập Google lần đầu tạo tài khoản');
+  r = await call('g1', 'POST', '/auth/login', { email: 'google.user@gmail.com', password: 'gibberish1' }); ok(r.s === 401 && /Google/.test(r.d.error), 'tài khoản Google đăng nhập bằng mật khẩu được nhắc dùng Google');
+  r = await call('g1', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && !r.d.is_new, 'đăng nhập Google lần sau dùng lại tài khoản');
+  r = await call('g1', 'POST', '/me/password', { password: 'matkhau456' }); ok(r.s === 200 && r.d.has_password, 'tài khoản Google đặt thêm mật khẩu');
+  googleInfo = { ...googleInfo, sub: 'g-456', email: 'm@n.vn', name: 'Minh G' };
+  r = await call('g2', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && !r.d.is_new && r.d.name === 'Minh', 'Google cùng email liên kết vào tài khoản sẵn có');
+  googleInfo = { ...googleInfo, aud: 'ung-dung-khac' };
+  r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'token Google của ứng dụng khác bị từ chối');
+  googleInfo = { ...googleInfo, aud: 'test-client', email_verified: 'false' };
+  r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'email Google chưa xác minh bị từ chối');
 
   console.log('Quyền riêng tư');
   r = await call('u2', 'POST', '/auth/register', { email: 'c@d.vn', password: 'matkhau123' });

@@ -14,30 +14,7 @@ const wrap = (fn) => async (req, res) => { try { await fn(req, res); } catch (e)
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
 // ---------------- Tài khoản (FR-01, FR-02, FR-09) ----------------
-const userOut = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, goal: j(u.goal, {}), settings: j(u.settings, {}) });
-router.post('/auth/register', wrap(async (req, res) => {
-  const { email, password, name } = req.body || {};
-  const em = String(email || '').trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return bad(res, 'Email không hợp lệ.');
-  if (String(password || '').length < 8) return bad(res, 'Mật khẩu cần ít nhất 8 ký tự.');
-  if ((await db.prepare('SELECT 1 FROM users WHERE email=?').get(em))) return bad(res, 'Email này đã được đăng ký.', 409);
-  const r = (await db.prepare('INSERT INTO users(email,name,pass_hash,created_at) VALUES(?,?,?,?)')
-    .run(em, String(name || em.split('@')[0]).slice(0, 60), A.hashPassword(password), now()));
-  A.setCookie(res, A.makeToken(Number(r.lastInsertRowid)));
-  res.json(userOut((await db.prepare('SELECT * FROM users WHERE id=?').get(r.lastInsertRowid))));
-}));
-router.post('/auth/login', wrap(async (req, res) => {
-  const em = String(req.body?.email || '').trim().toLowerCase();
-  const lim = A.loginLimiter(em + '|' + req.ip);
-  if (lim.blocked) return bad(res, 'Thử quá nhiều lần. Vui lòng đợi 10 phút.', 429);
-  const u = (await db.prepare('SELECT * FROM users WHERE email=?').get(em));
-  if (!u || !A.verifyPassword(String(req.body?.password || ''), u.pass_hash)) { lim.hit(); return bad(res, 'Email hoặc mật khẩu không đúng.', 401); }
-  if (u.locked) return bad(res, 'Tài khoản đã bị khóa.', 403);
-  lim.reset();
-  A.setCookie(res, A.makeToken(u.id));
-  res.json(userOut(u));
-}));
-router.post('/auth/logout', (req, res) => { A.clearCookie(res); res.json({ ok: true }); });
+const { userOut } = require('./account');
 router.get('/me', (req, res) => res.json(req.user ? userOut(req.user) : null));
 router.patch('/me', A.requireUser, wrap(async (req, res) => {
   const { name, goal, settings } = req.body || {};
@@ -57,7 +34,7 @@ router.patch('/me', A.requireUser, wrap(async (req, res) => {
 router.delete('/me', A.requireUser, wrap(async (req, res) => {   // quyền riêng tư: xóa tài khoản và dữ liệu
   const id = req.user.id;
   if (req.user.role !== 'learner') return bad(res, 'Tài khoản nội bộ cần quản trị viên xóa.', 403);
-  await tx(async () => { for (const t of ['attempts', 'lesson_progress', 'cards', 'comments', 'notifications', 'reports']) (await db.prepare(`DELETE FROM ${t} WHERE user_id=?`).run(id)); (await db.prepare('DELETE FROM users WHERE id=?').run(id)); });
+  await tx(async () => { for (const t of ['attempts', 'lesson_progress', 'cards', 'comments', 'notifications', 'reports', 'password_resets']) (await db.prepare(`DELETE FROM ${t} WHERE user_id=?`).run(id)); (await db.prepare('DELETE FROM users WHERE id=?').run(id)); });
   A.clearCookie(res); res.json({ ok: true });
 }));
 

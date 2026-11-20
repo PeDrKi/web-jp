@@ -122,6 +122,7 @@ function shell(path, opts) {
       ${S.user ? `<a class="btn sm ghost" href="#/cai-dat" title="Cài đặt">${esc(S.user.name.split(' (')[0].slice(0, 14))}</a>` : `<a class="btn sm primary" href="#/dang-nhap">Đăng nhập</a>`}
     </div></div></header>
   <main id="view"><div class="empty">Đang tải…</div></main>`;
+  const cur = $('nav.main a.on'); if (cur && cur.parentElement.scrollWidth > cur.parentElement.clientWidth) cur.parentElement.scrollLeft = cur.offsetLeft - 40;   // điện thoại: cuộn tới mục đang mở
   const sf = $('#sf'); if (sf) sf.onsubmit = (e) => { e.preventDefault(); const q = $('#sq').value.trim(); if (q) nav('/tim?q=' + encodeURIComponent(q)); };
 }
 const view = (html) => { $('#view').innerHTML = html; };
@@ -534,16 +535,84 @@ route(/^\/tim$/, async () => {
 });
 
 /* ---------- Tài khoản ---------- */
+// Ô mật khẩu có nút Hiện/Ẩn
+const pwField = (id, label, ac, extra = '') => `<label for="${id}">${label}</label><div class="pw"><input id="${id}" type="password" required autocomplete="${ac}" maxlength="128" ${extra}><button type="button" class="ghost sm" data-eye="${id}" aria-label="Hiện mật khẩu">Hiện</button></div>`;
+function bindEyes() { $$('[data-eye]').forEach((b) => b.onclick = () => { const i = $('#' + b.dataset.eye); const show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.textContent = show ? 'Ẩn' : 'Hiện'; b.setAttribute('aria-label', show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'); }); }
+// Giống quy tắc ở máy chủ, để báo lỗi ngay khi gõ
+const pwProblem = (pw) => pw.length < 8 ? 'Cần ít nhất 8 ký tự.' : !/[A-Za-z]/.test(pw) || !/\d/.test(pw) ? 'Cần có cả chữ và số.' : '';
+function pwStrength(inp, out) {
+  inp.addEventListener('input', () => { const v = inp.value; const pr = pwProblem(v);
+    const score = pr ? 0 : (v.length >= 12) + /[A-Z]/.test(v) + /[^A-Za-z0-9]/.test(v);
+    out.textContent = !v ? '' : pr || ['Mật khẩu tạm được', 'Mật khẩu khá', 'Mật khẩu mạnh', 'Mật khẩu rất mạnh'][score];
+    out.className = 'small ' + (!v ? '' : pr ? 'bad-text' : score >= 2 ? 'ok-text' : 'muted'); });
+}
+const showErr = (er, sel = '#err') => { const el = $(sel); el.hidden = false; el.textContent = er.message || er; };
+const authCfg = async () => (S.authCfg ||= await api('GET', '/auth/config').catch(() => ({})));
+// Nút "Đăng nhập bằng Google" (chỉ hiện khi quản trị viên đã cấu hình GOOGLE_CLIENT_ID)
+async function googleButton(box, after) {
+  const cfg = await authCfg(); if (!cfg.google_client_id || !box) return;
+  box.hidden = false;
+  if (!window.google?.accounts) await new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = ok; sc.onerror = fail; document.head.appendChild(sc); }).catch(() => {});
+  if (!window.google?.accounts) { box.innerHTML = '<div class="small muted">Không tải được nút Google.</div>'; return; }
+  google.accounts.id.initialize({ client_id: cfg.google_client_id, callback: async (r) => {
+    try { S.user = await api('POST', '/auth/google', { credential: r.credential }); applySettings(); after(S.user); } catch (er) { showErr(er); } } });
+  google.accounts.id.renderButton($('.gbtn', box), { theme: 'outline', size: 'large', text: 'continue_with', locale: 'vi', width: Math.min(360, box.clientWidth || 360) });
+}
+const afterLogin = (u) => nav(u.is_new ? '/cai-dat?moi=1' : S.query.next ? decodeURIComponent(S.query.next) : (['admin', 'editor', 'reviewer', 'teacher'].includes(u.role) && !S.query.next ? '/quan-tri' : '/'));
+const googleBox = '<div id="gbox" hidden><div class="or"><span>hoặc</span></div><div class="gbtn"></div></div>';
+
 route(/^\/dang-nhap$/, () => {
-  view(`<div class="card" style="max-width:420px;margin:30px auto"><h2>Đăng nhập</h2><form id="lf"><label for="e">Email</label><input id="e" type="email" required autocomplete="email"><label for="p">Mật khẩu</label><input id="p" type="password" required autocomplete="current-password">
+  if (S.user) return nav('/');
+  view(`<div class="card auth"><h2>Đăng nhập</h2><form id="lf" novalidate><label for="e">Email</label><input id="e" type="email" required autocomplete="email" value="${esc(S.query.email || '')}">
+    ${pwField('p', 'Mật khẩu', 'current-password')}
+    <div class="row between mt"><label class="inline"><input type="checkbox" id="rm" checked> Ghi nhớ đăng nhập</label><a class="small" href="#/quen-mat-khau">Quên mật khẩu?</a></div>
     <div id="err" class="alert bad mt" hidden></div><button class="primary mt" style="width:100%">Đăng nhập</button></form>
-    <p class="small muted mt">Chưa có tài khoản? <a href="#/dang-ky">Đăng ký</a><br>Đăng nhập bằng Google sẽ có ở bản sau.</p></div>`);
-  $('#lf').onsubmit = async (e) => { e.preventDefault(); try { S.user = await api('POST', '/auth/login', { email: $('#e').value, password: $('#p').value }); applySettings(); nav(S.query.next ? decodeURIComponent(S.query.next) : '/'); } catch (er) { $('#err').hidden = false; $('#err').textContent = er.message; } };
+    ${googleBox}<p class="small muted mt">Chưa có tài khoản? <a href="#/dang-ky${S.query.next ? '?next=' + encodeURIComponent(S.query.next) : ''}">Đăng ký miễn phí</a></p></div>`);
+  bindEyes(); googleButton($('#gbox'), afterLogin);
+  $('#lf').onsubmit = async (e) => { e.preventDefault(); const em = $('#e').value.trim(); if (!em || !$('#p').value) return showErr('Nhập email và mật khẩu.');
+    const btn = e.submitter; btn.disabled = true;
+    try { S.user = await api('POST', '/auth/login', { email: em, password: $('#p').value, remember: $('#rm').checked }); applySettings(); afterLogin(S.user); } catch (er) { showErr(er); } finally { btn.disabled = false; } };
 });
 route(/^\/dang-ky$/, () => {
-  view(`<div class="card" style="max-width:420px;margin:30px auto"><h2>Tạo tài khoản</h2><form id="rf"><label for="n">Tên hiển thị</label><input id="n" required maxlength="60" autocomplete="name"><label for="e">Email</label><input id="e" type="email" required autocomplete="email"><label for="p">Mật khẩu (ít nhất 8 ký tự)</label><input id="p" type="password" required minlength="8" autocomplete="new-password">
-    <div id="err" class="alert bad mt" hidden></div><button class="accent mt" style="width:100%">Đăng ký</button></form><p class="small muted mt">Đã có tài khoản? <a href="#/dang-nhap">Đăng nhập</a></p></div>`);
-  $('#rf').onsubmit = async (e) => { e.preventDefault(); try { S.user = await api('POST', '/auth/register', { name: $('#n').value, email: $('#e').value, password: $('#p').value }); applySettings(); nav('/cai-dat?moi=1'); } catch (er) { $('#err').hidden = false; $('#err').textContent = er.message; } };
+  if (S.user) return nav('/');
+  view(`<div class="card auth"><h2>Tạo tài khoản</h2><form id="rf" novalidate><label for="n">Tên hiển thị</label><input id="n" required maxlength="60" autocomplete="name"><label for="e">Email</label><input id="e" type="email" required autocomplete="email">
+    ${pwField('p', 'Mật khẩu (ít nhất 8 ký tự, có chữ và số)', 'new-password')}<div id="ps" class="small"></div>
+    ${pwField('p2', 'Nhập lại mật khẩu', 'new-password')}
+    <input name="website" id="hp" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
+    <div id="err" class="alert bad mt" hidden></div><button class="accent mt" style="width:100%">Đăng ký</button></form>
+    ${googleBox}<p class="small muted mt">Đã có tài khoản? <a href="#/dang-nhap">Đăng nhập</a></p></div>`);
+  bindEyes(); pwStrength($('#p'), $('#ps')); googleButton($('#gbox'), afterLogin);
+  $('#rf').onsubmit = async (e) => { e.preventDefault();
+    const em = $('#e').value.trim(), pw = $('#p').value;
+    if (!$('#n').value.trim()) return showErr('Nhập tên hiển thị.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(em)) return showErr('Email không hợp lệ.');
+    if (pwProblem(pw)) return showErr('Mật khẩu: ' + pwProblem(pw));
+    if (pw !== $('#p2').value) return showErr('Hai lần nhập mật khẩu không khớp.');
+    const btn = e.submitter; btn.disabled = true;
+    try { S.user = await api('POST', '/auth/register', { name: $('#n').value, email: em, password: pw, website: $('#hp').value }); applySettings(); nav(S.query.next ? '/cai-dat?moi=1&next=' + encodeURIComponent(S.query.next) : '/cai-dat?moi=1'); }
+    catch (er) { showErr(er); } finally { btn.disabled = false; } };
+});
+route(/^\/quen-mat-khau$/, async () => {
+  const cfg = await authCfg();
+  if (!cfg.email_reset) return view(`<div class="card auth"><h2>Quên mật khẩu</h2><p>Hệ thống chưa bật gửi email tự động.</p><p>Hãy liên hệ <b>giảng viên hoặc quản trị viên</b> để được cấp link đặt lại mật khẩu (vào Quản trị → Người dùng → "Link đặt lại mật khẩu").</p><a class="btn mt" href="#/dang-nhap">Quay lại đăng nhập</a></div>`);
+  view(`<div class="card auth"><h2>Quên mật khẩu</h2><p class="muted">Nhập email đã đăng ký, chúng tôi sẽ gửi link đặt lại mật khẩu (hiệu lực 1 giờ).</p><form id="ff" novalidate><label for="e">Email</label><input id="e" type="email" required autocomplete="email">
+    <div id="err" class="alert bad mt" hidden></div><div id="done" class="alert ok mt" hidden></div><button class="primary mt" style="width:100%">Gửi link</button></form><p class="small mt"><a href="#/dang-nhap">Quay lại đăng nhập</a></p></div>`);
+  $('#ff').onsubmit = async (e) => { e.preventDefault(); $('#err').hidden = true; const btn = e.submitter; btn.disabled = true;
+    try { await api('POST', '/auth/forgot', { email: $('#e').value.trim() }); $('#done').hidden = false; $('#done').textContent = 'Nếu email này đã đăng ký, link đặt lại mật khẩu đã được gửi. Kiểm tra hộp thư, kể cả mục Spam/Quảng cáo.'; }
+    catch (er) { showErr(er); } finally { btn.disabled = false; } };
+});
+route(/^\/dat-lai-mat-khau$/, async () => {
+  const t = S.query.t || '';
+  let info; try { info = await api('GET', '/auth/reset?t=' + encodeURIComponent(t)); }
+  catch (er) { return view(`<div class="card auth"><h2>Đặt lại mật khẩu</h2><div class="alert bad">${esc(er.message)}</div><p class="mt"><a class="btn" href="#/quen-mat-khau">Yêu cầu link mới</a></p></div>`); }
+  view(`<div class="card auth"><h2>Đặt mật khẩu mới</h2><p class="muted">Tài khoản: <b>${esc(info.email)}</b></p><form id="rsf" novalidate>
+    ${pwField('p', 'Mật khẩu mới', 'new-password')}<div id="ps" class="small"></div>${pwField('p2', 'Nhập lại mật khẩu mới', 'new-password')}
+    <div id="err" class="alert bad mt" hidden></div><button class="primary mt" style="width:100%">Lưu mật khẩu và đăng nhập</button></form></div>`);
+  bindEyes(); pwStrength($('#p'), $('#ps'));
+  $('#rsf').onsubmit = async (e) => { e.preventDefault(); const pw = $('#p').value;
+    if (pwProblem(pw)) return showErr('Mật khẩu: ' + pwProblem(pw));
+    if (pw !== $('#p2').value) return showErr('Hai lần nhập mật khẩu không khớp.');
+    try { S.user = await api('POST', '/auth/reset', { token: t, password: pw }); applySettings(); toast('Đã đặt mật khẩu mới.'); nav('/'); } catch (er) { showErr(er); } };
 });
 route(/^\/cai-dat$/, async () => {
   const u = S.user; const g = u.goal || {};
@@ -554,8 +623,20 @@ route(/^\/cai-dat$/, async () => {
     <div><label for="g-d">Thời hạn (nếu có)</label><input id="g-d" type="date" value="${esc(g.deadline || '')}"></div></div><button class="primary mt">Lưu mục tiêu</button></form></div>
   <div class="card mt"><h3>Hiển thị</h3><div class="row"><label class="inline"><input type="checkbox" id="s-f" ${S.settings.furigana === false ? '' : 'checked'}> Furigana</label><label class="inline"><input type="checkbox" id="s-v" ${S.settings.translation === false ? '' : 'checked'}> Bản dịch tiếng Việt</label>
     <select id="s-fs" aria-label="Cỡ chữ" style="width:auto">${[['s', 'Chữ nhỏ'], ['m', 'Chữ vừa'], ['l', 'Chữ lớn'], ['xl', 'Chữ rất lớn']].map(([v, t]) => `<option value="${v}" ${(S.settings.fontSize || 'm') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div>
-  <div class="card mt"><h3>Tài khoản</h3><p class="muted">${esc(u.email)}</p><div class="row"><a class="btn" href="#/bao-loi">Báo lỗi của tôi</a><button id="lo">Đăng xuất</button>${u.role === 'learner' ? '<button class="danger" id="del">Xóa tài khoản và dữ liệu</button>' : ''}</div></div>`);
-  $('#gf').onsubmit = async (e) => { e.preventDefault(); S.user = await api('PATCH', '/me', { goal: { type: $('#g-t').value, level: $('#g-l').value, deadline: $('#g-d').value } }); toast('Đã lưu mục tiêu.'); if (S.query.moi) nav('/'); };
+  <div class="card mt"><h3>Tài khoản</h3><form id="nf" class="row" style="align-items:flex-end"><div style="flex:1;min-width:200px"><label for="nm">Tên hiển thị</label><input id="nm" maxlength="60" required value="${esc(u.name)}"></div><button>Lưu tên</button></form>
+    <p class="muted mt">Email: <b>${esc(u.email)}</b>${u.google ? ' · đã liên kết Google' : ''}</p>
+    <div class="row"><a class="btn" href="#/bao-loi">Báo lỗi của tôi</a><button id="lo">Đăng xuất</button><button id="loa" title="Dùng khi bạn đăng nhập ở máy lạ hoặc nghi bị lộ mật khẩu">Đăng xuất mọi thiết bị</button>${u.role === 'learner' ? '<button class="danger" id="del">Xóa tài khoản và dữ liệu</button>' : ''}</div></div>
+  <div class="card mt"><h3>${u.has_password ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h3>${u.has_password ? '' : '<p class="small muted">Bạn đang đăng nhập bằng Google. Đặt thêm mật khẩu để có thể đăng nhập bằng email.</p>'}<form id="pf" novalidate style="max-width:420px">
+    ${u.has_password ? pwField('pc', 'Mật khẩu hiện tại', 'current-password') : ''}${pwField('pn', 'Mật khẩu mới', 'new-password')}<div id="ps" class="small"></div>${pwField('pn2', 'Nhập lại mật khẩu mới', 'new-password')}
+    <div id="perr" class="alert bad mt" hidden></div><button class="primary mt">Lưu mật khẩu</button><div class="small muted mt">Sau khi đổi, các thiết bị khác sẽ bị đăng xuất.</div></form></div>`);
+  bindEyes(); pwStrength($('#pn'), $('#ps'));
+  $('#nf').onsubmit = async (e) => { e.preventDefault(); try { S.user = await api('PATCH', '/me', { name: $('#nm').value.trim() }); toast('Đã lưu tên.'); render(); } catch (er) { toast(er.message, true); } };
+  $('#pf').onsubmit = async (e) => { e.preventDefault(); $('#perr').hidden = true; const pw = $('#pn').value;
+    if (pwProblem(pw)) return showErr('Mật khẩu mới: ' + pwProblem(pw), '#perr');
+    if (pw !== $('#pn2').value) return showErr('Hai lần nhập mật khẩu mới không khớp.', '#perr');
+    try { S.user = await api('POST', '/me/password', { current: $('#pc')?.value || '', password: pw }); toast('Đã lưu mật khẩu mới.'); render(); } catch (er) { showErr(er, '#perr'); } };
+  $('#loa').onclick = async () => { if (await confirmBox('Đăng xuất tài khoản trên tất cả thiết bị, kể cả máy này?')) { await api('POST', '/auth/logout-all'); S.user = null; applySettings(); nav('/dang-nhap'); toast('Đã đăng xuất trên mọi thiết bị.'); } };
+  $('#gf').onsubmit = async (e) => { e.preventDefault(); S.user = await api('PATCH', '/me', { goal: { type: $('#g-t').value, level: $('#g-l').value, deadline: $('#g-d').value } }); toast('Đã lưu mục tiêu.'); if (S.query.moi) nav(S.query.next ? decodeURIComponent(S.query.next) : '/'); };
   $('#s-f').onchange = (e) => setSetting('furigana', e.target.checked); $('#s-v').onchange = (e) => setSetting('translation', e.target.checked); $('#s-fs').onchange = (e) => setSetting('fontSize', e.target.value);
   $('#lo').onclick = async () => { await api('POST', '/auth/logout'); S.user = null; applySettings(); nav('/'); };
   const del = $('#del'); if (del) del.onclick = async () => { if (await confirmBox('Xóa vĩnh viễn tài khoản cùng toàn bộ bài làm, thẻ và bình luận của bạn?')) { await api('DELETE', '/me'); S.user = null; applySettings(); nav('/'); toast('Đã xóa tài khoản.'); } };

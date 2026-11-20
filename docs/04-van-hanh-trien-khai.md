@@ -2,7 +2,7 @@
 
 ## Chạy thử
 Yêu cầu Node.js ≥ 22.9. Không cần cài database: khi không có `DATABASE_URL`, ứng dụng dùng PGlite (Postgres nhúng) lưu ở `data/pg`.
-Deploy lên Render + Supabase: xem `docs/06-deploy-render-supabase.md`.
+Deploy lên Vercel + Supabase: xem `docs/07-deploy-vercel-supabase.md`. Render + Supabase: xem `docs/06-deploy-render-supabase.md`.
 ```bash
 npm install
 npm run seed -- --reset   # dữ liệu mẫu

@@ -1,3 +1,15 @@
+// Tải audio/ảnh: có Supabase thì trình duyệt gửi thẳng lên kho (file lớn không bị giới hạn của máy chủ),
+// không thì gửi qua máy chủ như cũ.
+async function uploadMedia(file) {
+  const sha = crypto.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('') : '';
+  const info = { filename: file.name, size: file.size, sha256: sha };
+  const s = sha ? await api('POST', '/admin/media/sign', info) : { mode: 'server' };
+  if (s.mode === 'done') return s;
+  if (s.mode === 'server') return api('POST', '/admin/media', { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(file.name) }, file);
+  const up = await fetch(s.upload_url, { method: 'PUT', headers: { 'content-type': s.mime, 'x-upsert': 'true', 'cache-control': '604800' }, body: file });
+  if (!up.ok) throw new Error('Tải file lên kho lưu trữ thất bại (' + up.status + ').');
+  return api('POST', '/admin/media/commit', info);
+}
 /* Khu vực quản trị: soạn đề, nhập hàng loạt, duyệt, báo cáo (AD-01..AD-09) */
 'use strict';
 const ROLE = { admin: 'Quản trị viên', teacher: 'Giảng viên', editor: 'Biên tập viên', reviewer: 'Người duyệt', learner: 'Người học' };
@@ -108,7 +120,7 @@ async function questionEditor(id) {
   if (!editable) $$('#qf input, #qf textarea, #qf select').forEach((el) => { el.disabled = true; });
   $('#up').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    try { const r = await api('POST', '/admin/media', { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(file.name) }, file);
+    try { const r = await uploadMedia(file);
       f.elements[/^audio/.test(r.mime) ? 'audio_url' : 'image_url'].value = r.url; $('#upmsg').textContent = r.reused ? 'File đã có sẵn trong kho, dùng lại.' : 'Đã tải lên.'; preview(); } catch (er) { toast(er.message, true); }
   };
   const setStatus = (s) => async () => { try { await api('POST', `/admin/questions/${id}/status`, { status: s }); toast('Đã cập nhật trạng thái.'); render(); } catch (e) { toast(e.message, true); } };
@@ -329,15 +341,35 @@ route(/^\/quan-tri\/thong-ke$/, async () => {
 route(/^\/quan-tri\/nguoi-dung$/, async () => {
   if (!can.admin()) return view('<div class="alert bad">Chỉ quản trị viên được quản lý người dùng.</div>');
   const q = S.query.q || ''; const list = await api('GET', '/admin/users?q=' + encodeURIComponent(q));
-  adminShell('nguoi-dung', `<h1>Người dùng (${list.length})</h1><form class="row mb" id="uf"><input name="q" type="search" placeholder="Tìm email / tên" value="${esc(q)}" style="max-width:320px"><button>Tìm</button></form>
-  <div class="card tw"><table><tr><th>Người dùng</th><th>Vai trò</th><th>Gói</th><th>Trạng thái</th></tr>${list.map((u) => `<tr><td>${esc(u.name)}<div class="small muted">${esc(u.email)}</div></td>
+  adminShell('nguoi-dung', `<div class="row between"><h1>Người dùng (${list.length})</h1><button class="accent" id="new-u">+ Tạo tài khoản</button></div>
+  <form class="row mb" id="uf"><input name="q" type="search" placeholder="Tìm email / tên" value="${esc(q)}" style="max-width:320px"><button>Tìm</button></form>
+  <div class="card tw"><table><tr><th>Người dùng</th><th>Vai trò</th><th>Đăng nhập gần nhất</th><th>Thao tác</th></tr>${list.map((u) => `<tr><td>${esc(u.name)}<div class="small muted">${esc(u.email)}${u.google ? ' · Google' : ''}${!u.has_password && !u.google ? ' · <span class="bad-text">chưa đặt mật khẩu</span>' : ''}</div></td>
     <td><select data-role="${u.id}" ${u.id === S.user.id ? 'disabled' : ''}>${Object.entries(ROLE).map(([k, t]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
-    <td><select data-plan="${u.id}"><option value="free" ${u.plan === 'free' ? 'selected' : ''}>Miễn phí</option><option value="pro" ${u.plan === 'pro' ? 'selected' : ''}>Trả phí</option></select></td>
-    <td>${u.id === S.user.id ? '(bạn)' : `<button class="sm ${u.locked ? 'accent' : 'danger'}" data-lock="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}</td></tr>`).join('')}</table></div>`);
+    <td class="small">${u.last_login ? fmtDate(u.last_login) : '<span class="muted">chưa</span>'}</td>
+    <td><div class="row" style="gap:6px">${u.id === S.user.id ? '<span class="small muted">(bạn)</span>' : `<button class="sm" data-reset="${u.id}" ${u.locked ? 'disabled' : ''}>Link đặt lại mật khẩu</button><button class="sm ghost" data-out="${u.id}">Đăng xuất mọi nơi</button><button class="sm ${u.locked ? 'accent' : 'danger'}" data-lock="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}</div></td></tr>`).join('')}</table></div>`);
   $('#uf').onsubmit = (e) => { e.preventDefault(); nav('/quan-tri/nguoi-dung?q=' + encodeURIComponent(e.target.q.value)); };
   const patch = (id, b) => api('PATCH', `/admin/users/${id}`, b).then(() => toast('Đã cập nhật.')).catch((e) => toast(e.message, true));
-  $$('[data-role]').forEach((s) => s.onchange = () => patch(s.dataset.role, { role: s.value })); $$('[data-plan]').forEach((s) => s.onchange = () => patch(s.dataset.plan, { plan: s.value }));
+  $$('[data-role]').forEach((s) => s.onchange = () => patch(s.dataset.role, { role: s.value }));
   $$('[data-lock]').forEach((b) => b.onclick = async () => { await patch(b.dataset.lock, { locked: b.dataset.v === '1' }); render(); });
+  $$('[data-out]').forEach((b) => b.onclick = async () => { try { await api('POST', `/admin/users/${b.dataset.out}/logout-all`); toast('Đã đăng xuất người dùng này trên mọi thiết bị.'); } catch (e) { toast(e.message, true); } });
+  // Hiện link để quản trị viên sao chép, gửi cho người dùng qua Zalo/Messenger/email
+  const closeModal = () => { $('#modal-root').innerHTML = ''; };
+  const showLink = (title, link, note) => modal(`<h3>${esc(title)}</h3><p class="small muted">${esc(note)}</p><input id="lk" readonly value="${esc(link)}"><div class="row mt"><button class="primary" id="cp">Sao chép link</button><button id="cl">Đóng</button></div>`, () => {
+    $('#lk').select();
+    $('#cp').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Đã sao chép.'); } catch { $('#lk').select(); toast('Nhấn Ctrl+C để sao chép.'); } };
+    $('#cl').onclick = () => { closeModal(); render(); }; });
+  $$('[data-reset]').forEach((b) => b.onclick = async () => { try { const r = await api('POST', `/admin/users/${b.dataset.reset}/reset-link`); showLink('Link đặt lại mật khẩu', r.link, `Gửi link này cho người dùng. Link dùng được một lần, hết hạn sau ${r.hours} giờ.`); } catch (e) { toast(e.message, true); } });
+  $('#new-u').onclick = () => modal(`<h3>Tạo tài khoản</h3><form id="cf" novalidate><label for="cu-n">Họ tên</label><input id="cu-n" maxlength="60"><label for="cu-e">Email</label><input id="cu-e" type="email" required>
+    <label for="cu-r">Vai trò</label><select id="cu-r">${Object.entries(ROLE).map(([k, t]) => `<option value="${k}" ${k === 'teacher' ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <label for="cu-p">Mật khẩu (để trống: hệ thống tạo link để người dùng tự đặt)</label><input id="cu-p" type="text" autocomplete="off" maxlength="128">
+    <div id="cerr" class="alert bad mt" hidden></div><div class="row mt"><button class="primary">Tạo</button><button type="button" id="cc">Hủy</button></div></form>`, () => {
+    $('#cc').onclick = closeModal;
+    $('#cf').onsubmit = async (e) => { e.preventDefault();
+      try {
+        const r = await api('POST', '/admin/users', { name: $('#cu-n').value, email: $('#cu-e').value.trim(), role: $('#cu-r').value, password: $('#cu-p').value });
+        if (r.link) showLink('Đã tạo tài khoản', r.link, 'Gửi link này cho người dùng để họ tự đặt mật khẩu lần đầu. Link hết hạn sau 7 ngày.');
+        else { closeModal(); toast('Đã tạo tài khoản.'); render(); }
+      } catch (er) { $('#cerr').hidden = false; $('#cerr').textContent = er.message; } }; });
 }, ST);
 
 /* ---- Kho audio/ảnh (AD-09) ---- */
@@ -346,7 +378,7 @@ route(/^\/quan-tri\/media$/, async () => {
   adminShell('media', `<h1>Kho audio & hình ảnh</h1>${can.edit() ? '<input type="file" id="mu" accept=".mp3,.wav,.m4a,.ogg,.png,.jpg,.jpeg,.webp" multiple>' : ''}<div class="small muted mt">Tải lên một lần, dùng cho nhiều đề. File trùng nội dung được nhận diện tự động.</div>
   <div class="card tw mt"><table><tr><th>File</th><th>Xem</th><th>URL (dán vào câu hỏi)</th></tr>${list.map((m) => `<tr><td>${esc(m.filename)}<div class="small muted">${Math.round(m.size / 1024)} KB · ${fmtDate(m.created_at)}</div></td><td>${/^audio/.test(m.mime) ? `<audio controls preload="none" src="${esc(m.url)}" style="max-width:240px"></audio>` : `<img src="${esc(m.url)}" alt="" style="max-height:50px">`}</td><td><span class="kbd">${esc(m.url)}</span></td></tr>`).join('') || '<tr><td colspan="3" class="empty">Chưa có file.</td></tr>'}</table></div>`);
   const mu = $('#mu'); if (mu) mu.onchange = async () => {
-    for (const f of mu.files) { try { const r = await api('POST', '/admin/media', { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(f.name) }, f); toast(r.reused ? `${f.name}: đã có sẵn, dùng lại.` : `Đã tải ${f.name}.`); } catch (e) { toast(`${f.name}: ${e.message}`, true); } }
+    for (const f of mu.files) { try { const r = await uploadMedia(f); toast(r.reused ? `${f.name}: đã có sẵn, dùng lại.` : `Đã tải ${f.name}.`); } catch (e) { toast(`${f.name}: ${e.message}`, true); } }
     render();
   };
 }, ST);

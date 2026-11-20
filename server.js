@@ -4,6 +4,7 @@ const A = require('./lib/auth');
 const learner = require('./routes/learner');
 const admin = require('./routes/admin');
 const extra = require('./routes/extra');
+const account = require('./routes/account');
 
 const app = express();
 app.disable('x-powered-by');
@@ -16,10 +17,11 @@ app.use((req, res, next) => {
 });
 // JSON cho API học viên; các route nhập file/upload của admin tự xử lý body thô
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/admin/import/questions') || req.path.startsWith('/admin/media')) return next();
+  if (req.path.startsWith('/admin/import/questions') || req.path === '/admin/media') return next();
   return express.json({ limit: '1mb' })(req, res, (err) => err ? res.status(400).json({ error: 'Dữ liệu gửi lên không hợp lệ.' }) : next());
 });
 app.use('/api', A.authMiddleware);
+app.use('/api', account);
 app.use('/api/admin', admin);
 app.use('/api', extra);
 app.use('/api', learner);

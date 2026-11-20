@@ -2,7 +2,7 @@
 
 Node ≥ 22.9 + Express + **PostgreSQL** (Supabase khi deploy; PGlite nhúng sẵn khi chạy trên máy, không cần cài gì) + giao diện web tiếng Việt thuần JS (không cần build).
 
-**Deploy miễn phí lên Render + Supabase:** xem [docs/06-deploy-render-supabase.md](docs/06-deploy-render-supabase.md).
+**Deploy miễn phí:** Vercel + Supabase, xem [docs/07-deploy-vercel-supabase.md](docs/07-deploy-vercel-supabase.md); hoặc Render + Supabase, xem [docs/06-deploy-render-supabase.md](docs/06-deploy-render-supabase.md).
 
 ## Chạy
 ```bash
@@ -76,4 +76,6 @@ Muốn tạo bộ đề khác: sửa mảng `rows` trong script (mỗi dòng là
 - `docs/04-van-hanh-trien-khai.md` – chạy, nhập đề (CSV/XLSX), triển khai, sao lưu.
 - `docs/05-trang-thai-va-viec-tiep-theo.md` – giới hạn hiện tại và backlog.
 - `docs/06-deploy-render-supabase.md` – deploy miễn phí lên Render + Supabase từng bước.
+- `docs/07-deploy-vercel-supabase.md` – deploy miễn phí lên Vercel + Supabase từng bước.
+- `docs/08-dang-nhap-email-google.md` – đăng ký/đăng nhập, quên mật khẩu qua email (Brevo), đăng nhập Google, tạo tài khoản giảng viên.
 - `docs/goc/URD_v0.1_ban-goc.docx` – tài liệu gốc.

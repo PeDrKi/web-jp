@@ -5,6 +5,7 @@ const learner = require('./routes/learner');
 const admin = require('./routes/admin');
 const extra = require('./routes/extra');
 const account = require('./routes/account');
+const classes = require('./routes/classes');
 
 const app = express();
 app.disable('x-powered-by');
@@ -22,6 +23,7 @@ app.use('/api', (req, res, next) => {
 });
 app.use('/api', A.authMiddleware);
 app.use('/api', account);
+app.use('/api', classes);
 app.use('/api/admin', admin);
 app.use('/api', extra);
 app.use('/api', learner);

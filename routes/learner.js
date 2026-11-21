@@ -34,7 +34,7 @@ router.patch('/me', A.requireUser, wrap(async (req, res) => {
 router.delete('/me', A.requireUser, wrap(async (req, res) => {   // quyền riêng tư: xóa tài khoản và dữ liệu
   const id = req.user.id;
   if (req.user.role !== 'learner') return bad(res, 'Tài khoản nội bộ cần quản trị viên xóa.', 403);
-  await tx(async () => { for (const t of ['attempts', 'lesson_progress', 'cards', 'comments', 'notifications', 'reports', 'password_resets']) (await db.prepare(`DELETE FROM ${t} WHERE user_id=?`).run(id)); (await db.prepare('DELETE FROM users WHERE id=?').run(id)); });
+  await tx(async () => { for (const t of ['attempts', 'lesson_progress', 'cards', 'comments', 'notifications', 'reports', 'password_resets', 'class_members']) (await db.prepare(`DELETE FROM ${t} WHERE user_id=?`).run(id)); (await db.prepare('DELETE FROM users WHERE id=?').run(id)); });
   A.clearCookie(res); res.json({ ok: true });
 }));
 
@@ -86,12 +86,26 @@ async function loadQuestions(ids) {
   const rows = new Map((await db.prepare("SELECT * FROM questions WHERE id = ANY(?) AND status='published'").all(ids)).map((r) => [r.id, r]));
   return ids.filter((id) => rows.has(id)).map((id) => shuffleOptions(C.rowToQuestion(rows.get(id))));   // giữ thứ tự trong đề
 }
+// Bài giao có "hiện đáp án sau hạn nộp": trả về thời điểm được xem đáp án (null nếu xem được ngay)
+async function answersLockedUntil(a) {
+  if (!a.assignment_id) return null;
+  const s = await db.prepare('SELECT due_at, show_answers FROM assignments WHERE id=?').get(a.assignment_id);
+  return s && s.show_answers === 'after_due' && s.due_at && s.due_at > now() ? s.due_at : null;
+}
 async function attemptView(a, { reveal = false } = {}) {
   const snap = j(a.snapshot, {});
   const answers = j(a.answers, {});
+  const lockedUntil = await answersLockedUntil(a);
   const base = { id: a.id, kind: a.kind, mode: a.mode, title: a.title, level: a.level, status: a.status, exam_id: a.exam_id,
     started_at: a.started_at, deadline: a.deadline, submitted_at: a.submitted_at, server_now: now(), leaves: a.leaves,
-    sections: snap.sections || [], answers, plays: j(a.plays, {}), play_limit: a.mode === 'real' ? 1 : 0 };
+    sections: snap.sections || [], answers, plays: j(a.plays, {}), play_limit: a.mode === 'real' ? 1 : 0, assignment_id: a.assignment_id || null, answers_locked_until: lockedUntil };
+  if (a.status === 'submitted' && lockedUntil && !reveal) {   // chỉ cho xem điểm, chưa cho xem đáp án
+    const r = j(a.result, null);
+    base.questions = snap.questions.map(C.publicQuestion);
+    base.result = r && { ...r, items: (r.items || []).map((it) => ({ kind: it.kind, answered: it.answered, chosen: it.chosen, graded: it.graded })) };
+    base.recommend = [];
+    return base;
+  }
   if (a.status === 'submitted' || reveal) {
     base.questions = snap.questions.map((q) => ({ ...C.publicQuestion(q), tts: q.audio_script, answer: q.answer, explanation: q.explanation, tags: q.tags, audio_script: q.audio_script,
       ...(q.kind === 'essay' ? { model_answer: q.model_answer, accepted: q.accepted } : {}) }));
@@ -118,8 +132,18 @@ const ownAttempt = async (req, res) => {
 };
 
 router.post('/attempts', A.requireUser, wrap(async (req, res) => {
-  const { exam_id, mode, practice } = req.body || {};
-  let questions, title, level, deadline = null, scoring = null, examVersion = null, sections = [];
+  let { exam_id, mode, practice } = req.body || {};
+  let questions, title, level, deadline = null, scoring = null, examVersion = null, sections = [], assignment = null;
+  if (req.body?.assignment_id) {   // bài giảng viên giao cho lớp
+    assignment = await db.prepare('SELECT s.* FROM assignments s JOIN class_members m ON m.class_id=s.class_id JOIN classes c ON c.id=s.class_id WHERE s.id=? AND m.user_id=? AND c.archived=0').get(Number(req.body.assignment_id), req.user.id);
+    if (!assignment) return bad(res, 'Không tìm thấy bài được giao.', 404);
+    const open_ = await db.prepare("SELECT id FROM attempts WHERE assignment_id=? AND user_id=? AND status='in_progress'").get(assignment.id, req.user.id);
+    if (open_) return res.json(await attemptView(await db.prepare('SELECT * FROM attempts WHERE id=?').get(open_.id)));   // đang làm dở thì mở lại
+    if (assignment.due_at && assignment.due_at < now() && !assignment.allow_late) return bad(res, 'Đã hết hạn nộp bài này.', 403);
+    const tries = (await db.prepare("SELECT COUNT(*) n FROM attempts WHERE assignment_id=? AND user_id=? AND status='submitted'").get(assignment.id, req.user.id)).n;
+    if (assignment.max_attempts && tries >= assignment.max_attempts) return bad(res, `Bạn đã dùng hết ${assignment.max_attempts} lượt làm bài này.`, 403);
+    exam_id = assignment.exam_id; mode = assignment.mode; delete req.body.sections;
+  }
   if (exam_id) {
     const e = (await db.prepare("SELECT * FROM exams WHERE id=? AND status='published'").get(Number(exam_id)));
     if (!e) return bad(res, 'Không tìm thấy đề.', 404);
@@ -132,8 +156,17 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
       sections.push({ key: s.key, name: s.name, from: questions.length, count: qs.length });
       questions.push(...qs);
     }
-    title = e.title + (only ? ' (theo phần)' : ''); level = e.level; scoring = JSON.parse(e.scoring); examVersion = e.version;
+    title = (assignment ? assignment.title : e.title) + (only ? ' (theo phần)' : ''); level = e.level; scoring = JSON.parse(e.scoring); examVersion = e.version;
     if (mode === 'real') { if (only) return bad(res, 'Chế độ thi thật phải làm trọn bộ đề.'); deadline = now() + e.duration_min * 60e3; }
+  } else if (practice && practice.retry) {   // làm lại các câu sai của một bài đã nộp
+    const src = await db.prepare("SELECT * FROM attempts WHERE id=? AND user_id=? AND status='submitted'").get(Number(practice.retry), req.user.id);
+    if (!src) return bad(res, 'Không tìm thấy bài làm.', 404);
+    if (await answersLockedUntil(src)) return bad(res, 'Giảng viên chọn chỉ hiện đáp án sau hạn nộp, hãy đợi hết hạn.', 403);
+    const sq = j(src.snapshot, {}).questions || [], items = j(src.result, {}).items || [];
+    const ids = sq.filter((q, i) => !items[i]?.ok && q.kind !== 'essay').map((q) => q.id);
+    if (!ids.length) return bad(res, 'Bài này không có câu trắc nghiệm nào làm sai.', 404);
+    questions = await loadQuestions(ids);
+    title = 'Làm lại câu sai: ' + src.title.replace(/^Làm lại câu sai: /, ''); level = src.level || '';
   } else if (practice) {
     const { level: lv, section, qtype, count, grammar } = practice;
     const where = ["status='published'"], args = [];
@@ -149,9 +182,9 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
   if (!questions.length) return bad(res, 'Đề chưa có câu hỏi đã duyệt.', 409);
   const kind = exam_id ? 'exam' : 'practice';
   const m = mode === 'real' && exam_id ? 'real' : 'practice';
-  const r = (await db.prepare(`INSERT INTO attempts(user_id,kind,exam_id,exam_version,mode,title,level,snapshot,started_at,deadline)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`).run(req.user.id, kind, exam_id || null, examVersion, m, title, level,
-    JSON.stringify({ questions, sections, scoring }), now(), deadline));
+  const r = (await db.prepare(`INSERT INTO attempts(user_id,kind,exam_id,exam_version,mode,title,level,snapshot,started_at,deadline,assignment_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id, kind, exam_id || null, examVersion, m, title, level,
+    JSON.stringify({ questions, sections, scoring }), now(), deadline, assignment?.id || null));
   res.json((await attemptView((await db.prepare('SELECT * FROM attempts WHERE id=?').get(r.lastInsertRowid)))));
 }));
 
@@ -163,7 +196,14 @@ router.get('/attempts', A.requireUser, wrap(async (req, res) => {
       score: rs?.score ?? null, maxScore: rs?.maxScore ?? null, passed: rs?.passed ?? null, correct: rs?.correct ?? null, total: rs?.total ?? null, pending_grading: rs?.pending_grading || 0 }; }));
 }));
 router.get('/attempts/:id', A.requireUser, wrap(async (req, res) => {
-  const a = (await ownAttempt(req, res)); if (!a) return;
+  let a = await db.prepare('SELECT * FROM attempts WHERE id=?').get(Number(req.params.id));
+  if (a && a.user_id !== req.user.id) {   // giảng viên xem bài học viên nộp cho lớp của mình
+    const ok = a.status === 'submitted' && a.assignment_id && ['teacher', 'admin'].includes(req.user.role) &&
+      await db.prepare('SELECT 1 FROM assignments s JOIN classes c ON c.id=s.class_id WHERE s.id=? AND (c.teacher_id=? OR ?)').get(a.assignment_id, req.user.id, req.user.role === 'admin');
+    if (!ok) a = null;
+    else { const u = await db.prepare('SELECT name,email FROM users WHERE id=?').get(a.user_id); return res.json({ ...(await attemptView(a, { reveal: true })), review_of: u, answers_locked_until: null }); }
+  }
+  if (!a) return bad(res, 'Không tìm thấy bài làm.', 404);
   res.json((await attemptView(a)));
 }));
 router.put('/attempts/:id/answers', A.requireUser, wrap(async (req, res) => {   // tự lưu mỗi lần chọn đáp án
@@ -197,6 +237,7 @@ router.post('/attempts/:id/play', A.requireUser, wrap(async (req, res) => {  // 
 router.post('/attempts/:id/check', A.requireUser, wrap(async (req, res) => {  // chỉ chế độ luyện tập: xem đáp án từng câu
   const a = (await ownAttempt(req, res)); if (!a) return;
   if (a.mode !== 'practice') return bad(res, 'Chế độ thi thật không cho xem đáp án trước khi nộp.', 403);
+  if (await answersLockedUntil(a)) return bad(res, 'Giảng viên chọn chỉ hiện đáp án sau hạn nộp.', 403);
   const q = j(a.snapshot, {}).questions.find((x) => x.id === Number(req.body?.qid));
   if (!q) return bad(res, 'Không tìm thấy câu hỏi.', 404);
   if (q.kind === 'essay') {

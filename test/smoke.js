@@ -299,6 +299,13 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   // luyện tập ngẫu nhiên có câu tự luận
   r = await call('hv', 'POST', '/attempts', { practice: { level: 'N5', section: 'writing', count: 10 } }); ok(r.s === 200 && r.d.questions.every((q) => q.kind === 'essay'), 'luyện tập phần Viết / Tự luận');
 
+  console.log('Làm lại câu sai');
+  r = await call('hv', 'POST', '/attempts', { practice: { level: 'N5', section: 'grammar', count: 5 } }); const ra = r.d;
+  await call('hv', 'PUT', `/attempts/${ra.id}/answers`, { answers: { [ra.questions[0].id]: { c: 0 } } });
+  r = await call('hv', 'POST', `/attempts/${ra.id}/submit`); const wrongN = r.d.result.items.filter((it) => !it.ok).length;
+  r = await call('hv', 'POST', '/attempts', { practice: { retry: ra.id } }); ok(r.s === 200 && r.d.questions.length === wrongN && /^Làm lại câu sai/.test(r.d.title), 'tạo bài làm lại đúng các câu sai');
+  r = await call('u3', 'POST', '/attempts', { practice: { retry: ra.id } }); ok(r.s === 404, 'không làm lại được bài của người khác');
+
   console.log('Đăng ký / đăng nhập / mật khẩu');
   r = await call('a1', 'POST', '/auth/register', { email: 'm@n.vn', password: 'chiconchu', name: 'M' }); ok(r.s === 400 && /chữ và số/.test(r.d.error), 'mật khẩu không có số bị từ chối');
   r = await call('a1', 'POST', '/auth/register', { email: 'm@n.vn', password: 'matkhau123', website: 'spam.com' }); ok(r.s === 400, 'bot điền ô bẫy bị chặn');
@@ -349,6 +356,49 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'token Google của ứng dụng khác bị từ chối');
   googleInfo = { ...googleInfo, aud: 'test-client', email_verified: 'false' };
   r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'email Google chưa xác minh bị từ chối');
+
+  console.log('Lớp học & giao bài');
+  r = await call('hv', 'POST', '/admin/classes', { name: 'X' }); ok(r.s === 403, 'học viên không tạo được lớp');
+  r = await call('gv', 'POST', '/admin/classes', { name: 'N5 tối thứ 3' }); ok(r.s === 200 && /^[A-Z2-9]{6}$/.test(r.d.code), 'giảng viên tạo lớp, có mã 6 ký tự');
+  const cls = r.d;
+  r = await call('hv', 'POST', '/classes/join', { code: 'SAIMA1' }); ok(r.s === 404, 'mã lớp sai bị từ chối');
+  r = await call('hv', 'POST', '/classes/join', { code: cls.code.toLowerCase() }); ok(r.s === 200 && r.d.id === cls.id, 'học viên vào lớp bằng mã (không phân biệt hoa thường)');
+  r = await call('gv', 'POST', `/admin/classes/${cls.id}/members`, { emails: 'e@f.vn, khongco@x.vn' }); ok(r.d.added === 1 && r.d.not_found[0] === 'khongco@x.vn', 'thêm học viên bằng email, báo email chưa có tài khoản');
+  r = await call('ed', 'GET', `/admin/classes/${cls.id}`); ok(r.s === 403, 'biên tập viên không xem lớp của giảng viên');
+  r = await call('gv', 'POST', `/admin/classes/${cls.id}/assignments`, { exam_id: 1, title: 'Bài tuần 1', due_at: Date.now() + 86400e3, max_attempts: 2, mode: 'practice', show_answers: 'after_due' });
+  ok(r.s === 200, 'giao đề cho lớp'); const cas1 = r.d.id;
+  r = await call('hv', 'GET', '/dashboard'); ok(r.d.notifications.some((n) => n.text.includes('Bài tuần 1')), 'học viên nhận thông báo bài mới');
+  r = await call('hv', 'GET', '/classes'); ok(r.d.classes.length === 1 && r.d.upcoming[0].id === cas1 && r.d.upcoming[0].status === 'todo', 'học viên thấy lớp và bài cần làm');
+  r = await call('a7', 'POST', '/attempts', { assignment_id: cas1 }); ok(r.s === 401 || r.s === 404, 'người ngoài lớp không làm được bài giao');
+  r = await call('hv', 'POST', '/attempts', { assignment_id: cas1 }); const cat1 = r.d; ok(r.s === 200 && cat1.assignment_id === cas1 && cat1.title === 'Bài tuần 1', 'học viên bắt đầu bài được giao');
+  r = await call('hv', 'POST', '/attempts', { assignment_id: cas1 }); ok(r.d.id === cat1.id, 'bấm lại thì mở tiếp bài đang làm dở');
+  r = await call('hv', 'POST', `/attempts/${cat1.id}/check`, { qid: cat1.questions[0].id }); ok(r.s === 403, 'không xem đáp án từng câu khi giảng viên khóa đáp án tới hạn nộp');
+  await call('hv', 'PUT', `/attempts/${cat1.id}/answers`, { answers: { [cat1.questions[0].id]: { c: 0 }, [cat1.questions[1].id]: { c: 1 } } });
+  r = await call('hv', 'POST', `/attempts/${cat1.id}/submit`); ok(r.s === 200 && r.d.answers_locked_until > 0 && r.d.questions[0].answer === undefined && r.d.result.score != null, 'nộp bài: thấy điểm nhưng chưa thấy đáp án');
+  r = await call('hv', 'POST', '/attempts', { practice: { retry: cat1.id } }); ok(r.s === 403, 'không làm lại câu sai khi đáp án còn khóa');
+  r = await call('gv', 'GET', `/admin/assignments/${cas1}`); const st = r.d.students;
+  ok(st.find((x) => x.email === 'hocvien@nihongo.local').status === 'done' && st.find((x) => x.email === 'e@f.vn').status === 'todo', 'giảng viên thấy ai đã nộp, ai chưa');
+  ok(r.d.questions.length > 0 && r.d.questions.every((q) => q.pct >= 0 && q.pct <= 100), 'phân tích tỷ lệ đúng từng câu của lớp');
+  r = await call('gv', 'GET', `/attempts/${cat1.id}`); ok(r.s === 200 && r.d.review_of.email === 'hocvien@nihongo.local' && r.d.questions[0].answer !== undefined, 'giảng viên xem bài làm của học viên (kèm đáp án)');
+  r = await call('ed', 'GET', `/attempts/${cat1.id}`); ok(r.s === 404, 'người khác không xem được bài làm của học viên');
+  r = await call('gv', 'POST', `/admin/assignments/${cas1}/remind`); ok(r.s === 200 && r.d.reminded === 1, 'nhắc người chưa nộp');
+  r = await call('u3', 'GET', '/dashboard'); ok(r.d.notifications.some((n) => n.text.startsWith('Nhắc')), 'người chưa nộp nhận lời nhắc');
+  r = await call('hv', 'POST', '/attempts', { assignment_id: cas1 }); const cat2 = r.d; await call('hv', 'POST', `/attempts/${cat2.id}/submit`);
+  r = await call('hv', 'POST', '/attempts', { assignment_id: cas1 }); ok(r.s === 403, 'hết số lượt làm bài');
+  r = await call('gv', 'GET', `/admin/classes/${cls.id}/gradebook`); ok(r.d.rows.length === 2 && r.d.assignments.length === 1 && r.d.rows.find((x) => x.email === 'hocvien@nihongo.local').cells[0].pct != null, 'bảng điểm lớp');
+  r = await call('gv', 'GET', `/admin/classes/${cls.id}/gradebook.xlsx`);
+  ok(r.s === 200 && typeof r.d === 'string' && r.d.startsWith('PK'), 'xuất bảng điểm Excel');
+  // hết hạn mà không cho nộp muộn
+  r = await call('gv', 'POST', `/admin/classes/${cls.id}/assignments`, { exam_id: 2, due_at: Date.now() - 1000, allow_late: false }); const cas2 = r.d.id;
+  r = await call('u3', 'POST', '/attempts', { assignment_id: cas2 }); ok(r.s === 403, 'quá hạn, không cho nộp muộn');
+  r = await call('gv', 'GET', `/admin/assignments/${cas2}`); ok(r.d.students.every((x) => x.status === 'missing'), 'quá hạn chưa nộp → "không nộp"');
+  // mở khóa đáp án khi hết hạn
+  await call('gv', 'PATCH', `/admin/assignments/${cas1}`, { due_at: Date.now() - 1000 });
+  r = await call('hv', 'GET', `/attempts/${cat1.id}`); ok(r.d.answers_locked_until === null && r.d.questions[0].answer !== undefined, 'hết hạn thì học viên xem được đáp án');
+  r = await call('gv', 'PATCH', `/admin/classes/${cls.id}`, { new_code: true }); ok(r.d.code && r.d.code !== cls.code, 'đổi mã lớp');
+  r = await call('hv', 'POST', `/classes/${cls.id}/leave`); r = await call('hv', 'GET', '/classes'); ok(r.d.classes.length === 0, 'học viên rời lớp');
+  r = await call('gv', 'DELETE', `/admin/classes/${cls.id}`); ok(r.s === 200, 'xóa lớp');
+  r = await call('hv', 'GET', `/attempts/${cat1.id}`); ok(r.s === 200, 'bài đã làm vẫn còn sau khi xóa lớp');
 
   console.log('Quyền riêng tư');
   r = await call('u2', 'POST', '/auth/register', { email: 'c@d.vn', password: 'matkhau123' });

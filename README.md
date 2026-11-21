@@ -78,4 +78,5 @@ Muốn tạo bộ đề khác: sửa mảng `rows` trong script (mỗi dòng là
 - `docs/06-deploy-render-supabase.md` – deploy miễn phí lên Render + Supabase từng bước.
 - `docs/07-deploy-vercel-supabase.md` – deploy miễn phí lên Vercel + Supabase từng bước.
 - `docs/08-dang-nhap-email-google.md` – đăng ký/đăng nhập, quên mật khẩu qua email (Brevo), đăng nhập Google, tạo tài khoản giảng viên.
+- `docs/09-lop-hoc-giao-bai.md` – lớp học: mã lớp/link mời, giao đề có hạn nộp, nhắc nộp bài, bảng điểm Excel.
 - `docs/goc/URD_v0.1_ban-goc.docx` – tài liệu gốc.

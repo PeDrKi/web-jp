@@ -23,8 +23,8 @@ const can = { edit: () => ['admin', 'editor', 'teacher'].includes(S.user.role), 
 
 function adminShell(active, html) {
   const items = isTeacher()
-    ? [['', 'Tổng quan'], ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Tải đề lên (Excel/CSV)'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bao-loi', 'Báo lỗi'], ['media', 'Kho audio/ảnh']]
-    : [['', 'Tổng quan'], ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Nhập hàng loạt'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bai-hoc', 'Bài đời sống'], ['ngu-phap', 'Ngữ pháp'], ['khoa-hoc', 'Khóa học'], ['bao-loi', 'Báo lỗi'], ['binh-luan', 'Bình luận'], ['thong-ke', 'Báo cáo câu hỏi'], ['media', 'Kho audio/ảnh'], ...(can.admin() ? [['nguoi-dung', 'Người dùng']] : [])];
+    ? [['', 'Tổng quan'], ['lop', 'Lớp học'], ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Tải đề lên (Excel/CSV)'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bao-loi', 'Báo lỗi'], ['media', 'Kho audio/ảnh']]
+    : [['', 'Tổng quan'], ...(can.admin() ? [['lop', 'Lớp học']] : []), ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Nhập hàng loạt'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bai-hoc', 'Bài đời sống'], ['ngu-phap', 'Ngữ pháp'], ['khoa-hoc', 'Khóa học'], ['bao-loi', 'Báo lỗi'], ['binh-luan', 'Bình luận'], ['thong-ke', 'Báo cáo câu hỏi'], ['media', 'Kho audio/ảnh'], ...(can.admin() ? [['nguoi-dung', 'Người dùng']] : [])];
   view(`<div class="admin-wrap"><nav class="admin-nav card flat" aria-label="Quản trị">${items.map(([k, t]) => `<a href="#/quan-tri${k ? '/' + k : ''}" class="${k === active ? 'on' : ''}">${t}</a>`).join('')}<div class="small muted" style="padding:8px 12px">Vai trò: ${ROLE[S.user.role]}</div></nav><div id="ad">${html}</div></div>`);
 }
 const ST = { staff: true };
@@ -81,12 +81,14 @@ async function questionEditor(id) {
       <label>Đáp án ngắn được chấp nhận (mỗi dòng một đáp án, không bắt buộc)</label><textarea name="accepted" rows="2" class="jp" placeholder="わたしはがくせいです&#10;私は学生です">${esc((Q.accepted || []).join('\n'))}</textarea>
       <div class="small muted">Nếu câu trả lời khớp một dòng ở trên (bỏ qua dấu câu, khoảng trắng, katakana/hiragana), hệ thống tự chấm đủ điểm. Không khớp thì giảng viên chấm tay ở mục “Chấm tự luận”.</div></div>
     <label id="lbl-exp">Giải thích tiếng Việt (nêu vì sao các đáp án khác sai)</label><textarea name="explanation" rows="3">${esc(Q.explanation)}</textarea>
-    <div class="field-row"><div><label>Mẫu ngữ pháp (cách nhau dấu phẩy)</label><input name="grammar" value="${esc((Q.tags.grammar || []).join(', '))}"></div><div><label>Kanji</label><input name="kanji" value="${esc((Q.tags.kanji || []).join(', '))}"></div><div><label>Tình huống</label><input name="situation" value="${esc((Q.tags.situation || []).join(', '))}"></div></div>
+    <details class="more" ${(Q.tags.grammar || []).length || (Q.tags.kanji || []).length || (Q.tags.situation || []).length ? 'open' : ''}><summary>Thẻ phân loại <span class="small muted">(không bắt buộc · giúp thống kê điểm yếu và gợi ý bài học)</span></summary>
+    <div class="field-row"><div><label>Mẫu ngữ pháp (cách nhau dấu phẩy)</label><input name="grammar" value="${esc((Q.tags.grammar || []).join(', '))}"></div><div><label>Kanji</label><input name="kanji" value="${esc((Q.tags.kanji || []).join(', '))}"></div><div><label>Tình huống</label><input name="situation" value="${esc((Q.tags.situation || []).join(', '))}"></div></div></details>
+    <details class="more" id="blk-media" ${Q.section === 'listening' || scriptTxt || Q.audio_url || Q.image_url ? 'open' : ''}><summary>Audio, hình ảnh, kịch bản bài nghe <span class="small muted">(bắt buộc với phần Nghe hiểu)</span></summary>
     <label>Kịch bản bài nghe (mỗi dòng: <span class="kbd">M: lời</span> hoặc <span class="kbd">F: lời</span>) - dùng giọng đọc tổng hợp nếu chưa có file audio</label><textarea name="script" rows="4" class="jp">${esc(scriptTxt)}</textarea>
     <div class="field-row"><div><label>Audio (URL từ kho media)</label><input name="audio_url" value="${esc(Q.audio_url)}" placeholder="/uploads/…"></div><div><label>Hình ảnh (URL)</label><input name="image_url" value="${esc(Q.image_url)}" placeholder="/uploads/…"></div></div>
-    <div class="row"><input type="file" id="up" accept=".mp3,.wav,.m4a,.ogg,.png,.jpg,.jpeg,.webp" style="width:auto"><span class="small muted" id="upmsg">Tải audio/ảnh: file trùng sẽ được dùng lại</span></div>
+    <div class="row"><input type="file" id="up" accept=".mp3,.wav,.m4a,.ogg,.png,.jpg,.jpeg,.webp" style="width:auto"><span class="small muted" id="upmsg">Tải audio/ảnh: file trùng sẽ được dùng lại</span></div></details>
     <div id="qerr" class="alert bad mt" hidden></div>
-    <div class="row mt">${editable ? '<button class="primary" id="save">Lưu</button>' : ''}
+    <div class="row mt savebar">${editable ? '<button class="primary" id="save">Lưu</button>' : ''}
       ${id && Q.status === 'draft' && editable ? (T ? '<button type="button" class="accent" id="to-pub">Đăng vào ngân hàng</button>' : '<button type="button" id="to-pending">Gửi duyệt</button>') : ''}
       ${id && Q.status === 'pending' && canRev ? '<button type="button" class="accent" id="to-pub">Duyệt & đăng</button><button type="button" id="to-draft">Trả về nháp</button>' : ''}
       ${id && Q.status === 'published' && canRev ? '<button type="button" class="danger" id="to-removed">Gỡ khỏi người học</button>' : ''}
@@ -94,7 +96,7 @@ async function questionEditor(id) {
       ${id && (can.admin() || (T && mine)) && Q.status !== 'published' ? '<button type="button" class="danger ghost" id="del">Xóa</button>' : ''}</div>
     ${id && Q.status === 'published' && S.user.role === 'editor' ? '<div class="small muted mt">Lưu thay đổi sẽ tạo phiên bản mới và đưa câu hỏi về “Chờ duyệt”. Kết quả cũ của người học vẫn giữ theo phiên bản họ đã làm.</div>' : ''}
   </form>
-  <div><div class="card"><h3>Xem trước (đúng như người học thấy)</h3><div id="pv" class="preview qcard"></div></div>
+  <div class="sticky-col"><div class="card"><h3>Xem trước (đúng như người học thấy)</h3><div id="pv" class="preview qcard"></div></div>
     ${id ? `<div class="card mt"><h3>Lịch sử phiên bản</h3>${Q.versions.map((v) => `<div class="small">v${v.version} · ${fmtDate(v.at)}</div>`).join('')}</div>` : ''}</div></div>`);
   const f = $('#qf');
   const read = () => {
@@ -116,7 +118,7 @@ async function questionEditor(id) {
   };
   const toggleKind = () => { const es = (new FormData(f).get('kind') || 'mcq') === 'essay'; $('#blk-mcq').hidden = es; $('#blk-essay').hidden = !es;
     $('#lbl-exp').textContent = es ? 'Giải thích / ghi chú thêm (không bắt buộc)' : 'Giải thích tiếng Việt (nêu vì sao các đáp án khác sai)'; };
-  f.oninput = preview; f.onchange = () => { toggleKind(); preview(); }; toggleKind(); preview();
+  f.oninput = preview; f.onchange = (e) => { toggleKind(); preview(); if (e.target.name === 'section' && e.target.value === 'listening') $('#blk-media').open = true; }; toggleKind(); preview();
   if (!editable) $$('#qf input, #qf textarea, #qf select').forEach((el) => { el.disabled = true; });
   $('#up').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -454,3 +456,141 @@ async function courseEditor(id) {
 }
 route(/^\/quan-tri\/khoa-hoc\/moi$/, () => courseEditor(null), ST);
 route(/^\/quan-tri\/khoa-hoc\/(\d+)$/, (id) => courseEditor(Number(id)), ST);
+
+/* ---- Lớp học & giao bài (giảng viên) ---- */
+const AST = { todo: ['Chưa làm', 'warn'], doing: ['Đang làm', ''], done: ['Đã nộp', 'ok'], late: ['Nộp muộn', 'warn'], missing: ['Không nộp', 'bad'], grading: ['Chờ chấm', ''] };
+const astChip = (s) => `<span class="chip ${AST[s]?.[1] || ''}">${AST[s]?.[0] || s}</span>`;
+const toLocalInput = (t) => (t ? new Date(t - new Date(t).getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '');
+const joinLink = (code) => `${location.origin}${location.pathname}#/lop/vao?ma=${code}`;
+const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Đã sao chép.'); } catch { toast('Không sao chép được, hãy chọn và nhấn Ctrl+C.', true); } };
+const pctCls = (p) => (p == null ? '' : p >= 80 ? 'cell-ok' : p >= 50 ? 'cell-mid' : 'cell-bad');
+
+route(/^\/quan-tri\/lop$/, async () => {
+  const list = await api('GET', '/admin/classes');
+  const active = list.filter((c) => !c.archived), old = list.filter((c) => c.archived);
+  const card = (c) => `<a class="card" href="#/quan-tri/lop/${c.id}"><div class="row between"><b>${esc(c.name)}</b>${c.archived ? '<span class="chip">Đã lưu trữ</span>' : `<span class="chip">${esc(c.code)}</span>`}</div>
+    <div class="small muted mt">${c.members} học viên · ${c.assignments} bài giao${can.admin() && c.teacher_id !== S.user.id ? ` · GV: ${esc(c.teacher_name || '')}` : ''}</div></a>`;
+  adminShell('lop', `<div class="row between"><h1 style="margin:0">Lớp học</h1><button class="primary" id="new-c">＋ Tạo lớp</button></div>
+    <p class="muted">Tạo lớp, đưa mã lớp hoặc link mời cho học viên, rồi giao đề có hạn nộp. Bạn theo dõi ai đã nộp, nhắc người chưa nộp và xuất bảng điểm ra Excel.</p>
+    ${active.length ? `<div class="grid g3">${active.map(card).join('')}</div>` : '<div class="empty">Chưa có lớp nào. Bấm “Tạo lớp” để bắt đầu.</div>'}
+    ${old.length ? `<details class="mt2"><summary>Lớp đã lưu trữ (${old.length})</summary><div class="grid g3 mt">${old.map(card).join('')}</div></details>` : ''}`);
+  $('#new-c').onclick = () => modal(`<h3>Tạo lớp</h3><form id="ncf"><label for="nc-n">Tên lớp</label><input id="nc-n" maxlength="80" required placeholder="VD: N4 tối thứ 3-5">
+    <label for="nc-d">Mô tả (không bắt buộc)</label><textarea id="nc-d" maxlength="500" rows="2" placeholder="Lịch học, phòng học, ghi chú cho học viên…"></textarea>
+    <div class="row mt" style="justify-content:flex-end"><button type="button" id="nc-x">Hủy</button><button class="primary">Tạo lớp</button></div></form>`, (m, close) => {
+    $('#nc-n', m).focus(); $('#nc-x', m).onclick = close;
+    $('#ncf', m).onsubmit = async (e) => { e.preventDefault();
+      try { const r = await api('POST', '/admin/classes', { name: $('#nc-n', m).value, description: $('#nc-d', m).value }); close(); nav(`/quan-tri/lop/${r.id}?tab=hv`); } catch (er) { toast(er.message, true); } };
+  });
+}, ST);
+
+function assignForm(exams, a) {   // a: bài đang sửa (không đổi được đề)
+  const v = a || { mode: 'practice', show_answers: 'after_submit', max_attempts: 1, allow_late: true };
+  const def = new Date(); def.setDate(def.getDate() + 7); def.setHours(21, 0, 0, 0);
+  return `<h3>${a ? 'Sửa bài giao' : 'Giao bài cho lớp'}</h3><form id="asf">
+    ${a ? `<div class="small muted">Đề: <b>${esc(a.exam_title)}</b> (không đổi đề sau khi đã giao)</div>` : `<label for="as-e">Chọn đề (đề đã đăng)</label><select id="as-e" required><option value="">— Chọn đề —</option>${exams.map((e) => `<option value="${e.id}">[${esc(e.level)}] ${esc(e.title)} · ${e.question_count} câu</option>`).join('')}</select>`}
+    <label for="as-t">Tên bài giao</label><input id="as-t" maxlength="120" value="${esc(v.title || '')}" placeholder="Để trống: dùng tên đề">
+    <div class="grid g2"><div><label for="as-d">Hạn nộp</label><input id="as-d" type="datetime-local" value="${a ? toLocalInput(a.due_at) : toLocalInput(def.getTime())}"><label class="inline small"><input type="checkbox" id="as-nod" ${a && !a.due_at ? 'checked' : ''}> Không đặt hạn</label></div>
+      <div><label for="as-m">Số lượt làm tối đa</label><select id="as-m">${[1, 2, 3, 5, 0].map((n) => `<option value="${n}" ${Number(v.max_attempts) === n ? 'selected' : ''}>${n ? n + ' lượt' : 'Không giới hạn'}</option>`).join('')}</select></div></div>
+    <div class="grid g2"><div><label for="as-mode">Chế độ</label><select id="as-mode"><option value="practice" ${v.mode === 'practice' ? 'selected' : ''}>Luyện tập (không giới hạn giờ)</option><option value="real" ${v.mode === 'real' ? 'selected' : ''}>Thi thật (tính giờ, nghe 1 lần)</option></select></div>
+      <div><label for="as-sa">Hiện đáp án cho học viên</label><select id="as-sa"><option value="after_submit" ${v.show_answers !== 'after_due' ? 'selected' : ''}>Ngay sau khi nộp</option><option value="after_due" ${v.show_answers === 'after_due' ? 'selected' : ''}>Sau hạn nộp (chống chép đáp án)</option></select></div></div>
+    <label class="inline"><input type="checkbox" id="as-late" ${v.allow_late ? 'checked' : ''}> Cho nộp muộn sau hạn (được đánh dấu “Nộp muộn”)</label>
+    <label for="as-n">Lời dặn cho học viên (không bắt buộc)</label><textarea id="as-n" rows="2" maxlength="1000" placeholder="VD: Làm phần nghe trước, chú ý câu 5–8.">${esc(v.note || '')}</textarea>
+    <div class="row mt" style="justify-content:flex-end"><button type="button" id="as-x">Hủy</button><button class="primary">${a ? 'Lưu' : 'Giao bài'}</button></div></form>`;
+}
+function readAssignForm(m) {
+  const d = $('#as-d', m).value, nod = $('#as-nod', m).checked;
+  return { exam_id: $('#as-e', m) ? Number($('#as-e', m).value) : undefined, title: $('#as-t', m).value, due_at: nod || !d ? null : new Date(d).getTime(),
+    max_attempts: Number($('#as-m', m).value), mode: $('#as-mode', m).value, show_answers: $('#as-sa', m).value, allow_late: $('#as-late', m).checked, note: $('#as-n', m).value };
+}
+
+route(/^\/quan-tri\/lop\/(\d+)$/, async (id) => {
+  const tab = S.query.tab || 'bai';
+  const c = await api('GET', '/admin/classes/' + id);
+  const tabs = [['bai', `Bài giao (${c.assignments.length})`], ['hv', `Học viên (${c.members.length})`], ['diem', 'Bảng điểm'], ['cai-dat', 'Cài đặt']];
+  let body = '';
+  if (tab === 'bai') {
+    body = `<div class="row between mb"><span class="muted small">Bài mới nhất ở trên. Bấm vào bài để xem ai đã nộp và câu nào cả lớp hay sai.</span><button class="accent" id="add-a" ${c.archived ? 'disabled' : ''}>＋ Giao bài</button></div>
+      ${!c.members.length ? `<div class="alert info mb">Lớp chưa có học viên. Vào tab <a href="#/quan-tri/lop/${id}?tab=hv">Học viên</a> để lấy mã lớp hoặc thêm bằng email.</div>` : ''}
+      ${c.assignments.length ? `<div class="card tw"><table><tr><th>Bài</th><th>Hạn nộp</th><th>Đã nộp</th><th></th></tr>${c.assignments.map((a) => { const p = a.total ? Math.round((100 * a.done) / a.total) : 0; const over = a.due_at && a.due_at < Date.now();
+        return `<tr><td><a href="#/quan-tri/giao-bai/${a.id}"><b>${esc(a.title)}</b></a><div class="small muted">${esc(a.exam_title)} · ${a.question_count} câu · ${a.mode === 'real' ? 'thi thật' : 'luyện tập'}${a.show_answers === 'after_due' ? ' · đáp án sau hạn' : ''}</div></td>
+        <td class="small">${a.due_at ? `${fmtDate(a.due_at)}${over ? '<div class="muted">đã hết hạn</div>' : ''}` : '<span class="muted">không hạn</span>'}</td>
+        <td style="min-width:140px"><div class="small"><b>${a.done}</b>/${a.total}</div><div class="bar ${p >= 80 ? 'ok' : ''}"><i style="width:${p}%"></i></div></td>
+        <td><a class="btn sm" href="#/quan-tri/giao-bai/${a.id}">Chi tiết</a></td></tr>`; }).join('')}</table></div>` : '<div class="empty">Chưa giao bài nào.</div>'}`;
+  } else if (tab === 'hv') {
+    body = `<div class="grid g2"><div class="card"><div class="small muted">Mã lớp</div><div class="code-big">${esc(c.code)}</div>
+        <p class="small muted">Học viên đăng nhập, vào <b>Lớp học</b> và nhập mã này. Hoặc gửi link mời qua Zalo/Messenger:</p>
+        <div class="row"><input id="jl" readonly value="${esc(joinLink(c.code))}" style="flex:1;min-width:0"><button id="cp-l">Sao chép link</button></div>
+        <div class="row mt"><button class="sm ghost" id="cp-c">Sao chép mã</button><button class="sm ghost" id="new-code">Đổi mã mới</button></div></div>
+      <div class="card"><b>Thêm bằng email</b><p class="small muted">Mỗi dòng hoặc dấu phẩy một email. Chỉ thêm được người đã có tài khoản.</p>
+        <textarea id="em" rows="4" placeholder="an@gmail.com&#10;binh@gmail.com"></textarea><button class="primary mt" id="add-m">Thêm vào lớp</button><div id="add-r" class="mt"></div></div></div>
+      <h2 class="mt2">Danh sách học viên (${c.members.length})</h2>
+      ${c.members.length ? `<div class="card tw"><table><tr><th>Học viên</th><th>Vào lớp</th><th>Đăng nhập gần nhất</th><th></th></tr>${c.members.map((u) => `<tr><td>${esc(u.name)}<div class="small muted">${esc(u.email)}</div></td><td class="small">${fmtDate(u.joined_at)}</td><td class="small">${u.last_login ? fmtDate(u.last_login) : '<span class="muted">chưa</span>'}</td><td><button class="sm ghost" data-rm="${u.id}" data-n="${esc(u.name)}">Xóa khỏi lớp</button></td></tr>`).join('')}</table></div>` : '<div class="empty">Chưa có học viên.</div>'}`;
+  } else if (tab === 'diem') {
+    const g = await api('GET', `/admin/classes/${id}/gradebook`);
+    body = `<div class="row between mb"><span class="small muted">Điểm cao nhất của mỗi học viên ở từng bài (%). Bấm vào điểm để xem bài làm.</span><a class="btn" href="/api/admin/classes/${id}/gradebook.xlsx" download>⇩ Tải Excel</a></div>
+      ${g.rows.length && g.assignments.length ? `<div class="card tw"><table class="gb"><tr><th>Học viên</th>${g.assignments.map((a) => `<th title="${esc(a.title)}"><a href="#/quan-tri/giao-bai/${a.id}">${esc(a.title.length > 18 ? a.title.slice(0, 17) + '…' : a.title)}</a>${a.due_at ? `<div class="small muted">${new Date(a.due_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</div>` : ''}</th>`).join('')}<th>TB</th><th>Không nộp</th></tr>
+        ${g.rows.map((r) => `<tr><td>${esc(r.name)}<div class="small muted">${esc(r.email)}</div></td>${r.cells.map((x) => `<td>${x.pct != null ? `<a class="${pctCls(x.pct)}" href="#/ketqua/${x.attempt_id}">${x.pct}%</a>${x.status === 'late' ? '<div class="small muted">muộn</div>' : x.status === 'grading' ? '<div class="small muted">chờ chấm</div>' : ''}` : `<span class="small ${x.status === 'missing' ? 'bad-text' : 'muted'}">${AST[x.status]?.[0] || ''}</span>`}</td>`).join('')}
+          <td><b class="${pctCls(r.avg)}">${r.avg != null ? r.avg + '%' : '—'}</b></td><td>${r.missing ? `<span class="bad-text">${r.missing}</span>` : '0'}</td></tr>`).join('')}</table></div>` : '<div class="empty">Cần có học viên và ít nhất một bài giao để có bảng điểm.</div>'}`;
+  } else {
+    body = `<div class="card"><form id="cf2"><label for="c-n">Tên lớp</label><input id="c-n" maxlength="80" value="${esc(c.name)}"><label for="c-d">Mô tả</label><textarea id="c-d" rows="3" maxlength="500">${esc(c.description)}</textarea><button class="primary mt">Lưu</button></form></div>
+      <div class="card mt"><b>${c.archived ? 'Mở lại lớp' : 'Lưu trữ lớp'}</b><p class="small muted">${c.archived ? 'Học viên lại thấy lớp và vào được bằng mã.' : 'Khi khóa học kết thúc: học viên không còn thấy lớp, không vào lớp bằng mã được nữa. Bảng điểm vẫn giữ.'}</p><button id="arch">${c.archived ? 'Mở lại lớp' : 'Lưu trữ lớp'}</button></div>
+      <div class="card mt"><b class="bad-text">Xóa lớp</b><p class="small muted">Xóa lớp, danh sách học viên và các bài giao. Bài học viên đã làm vẫn nằm trong lịch sử của họ.</p><button class="danger" id="del-c">Xóa lớp</button></div>`;
+  }
+  adminShell('lop', `<a class="small" href="#/quan-tri/lop">← Lớp học</a><div class="row between mt"><div><h1 style="margin:0">${esc(c.name)}</h1><div class="small muted">Mã lớp <b>${esc(c.code)}</b> · ${c.members.length} học viên${c.archived ? ' · <span class="chip">Đã lưu trữ</span>' : ''}</div></div></div>
+    <div class="tabs mt" role="tablist">${tabs.map(([k, t]) => `<a class="tab ${tab === k ? 'on' : ''}" role="tab" aria-selected="${tab === k}" href="#/quan-tri/lop/${id}?tab=${k}">${t}</a>`).join('')}</div>${body}`);
+
+  if (tab === 'bai') { const b = $('#add-a'); if (b) b.onclick = async () => {
+    const exams = await api('GET', '/admin/assignable-exams');
+    if (!exams.length) return toast('Chưa có đề nào được đăng. Hãy tạo và đăng một đề trước.', true);
+    modal(assignForm(exams), (m, close) => { $('#as-x', m).onclick = close;
+      $('#as-e', m).onchange = () => { if (!$('#as-t', m).value) $('#as-t', m).placeholder = $('#as-e', m).selectedOptions[0].text.replace(/^\[[^\]]+\]\s*/, '').replace(/ · \d+ câu$/, ''); };
+      $('#asf', m).onsubmit = async (e) => { e.preventDefault();
+        try { const r = await api('POST', `/admin/classes/${id}/assignments`, readAssignForm(m)); close(); toast('Đã giao bài. Học viên trong lớp nhận được thông báo.'); nav('/quan-tri/giao-bai/' + r.id); } catch (er) { toast(er.message, true); } }; });
+  }; }
+  if (tab === 'hv') {
+    $('#cp-l').onclick = () => copyText($('#jl').value); $('#cp-c').onclick = () => copyText(c.code);
+    $('#new-code').onclick = async () => { if (await confirmBox('Đổi mã lớp? Mã và link mời cũ sẽ không dùng được nữa (học viên đã vào lớp không bị ảnh hưởng).')) { await api('PATCH', '/admin/classes/' + id, { new_code: true }); render(); } };
+    $('#add-m').onclick = async () => { try { const r = await api('POST', `/admin/classes/${id}/members`, { emails: $('#em').value });
+      if (r.added) await render();
+      if (!r.not_found.length) return toast(`Đã thêm ${r.added} học viên.`);
+      $('#add-r').innerHTML = `<div class="alert ${r.added ? 'info' : 'bad'}">Đã thêm ${r.added} người. Chưa có tài khoản: <b>${r.not_found.map(esc).join(', ')}</b>. Hãy gửi họ link mời (ô bên cạnh) để tự đăng ký và vào lớp.</div>`; $('#em').value = r.not_found.join('\n');
+    } catch (e) { toast(e.message, true); } };
+    $$('[data-rm]').forEach((b) => b.onclick = async () => { if (await confirmBox(`Xóa ${b.dataset.n} khỏi lớp? Bài họ đã làm vẫn được giữ.`)) { await api('DELETE', `/admin/classes/${id}/members/${b.dataset.rm}`); render(); } });
+  }
+  if (tab === 'cai-dat') {
+    $('#cf2').onsubmit = async (e) => { e.preventDefault(); try { await api('PATCH', '/admin/classes/' + id, { name: $('#c-n').value, description: $('#c-d').value }); toast('Đã lưu.'); render(); } catch (er) { toast(er.message, true); } };
+    $('#arch').onclick = async () => { await api('PATCH', '/admin/classes/' + id, { archived: !c.archived }); toast(c.archived ? 'Đã mở lại lớp.' : 'Đã lưu trữ lớp.'); render(); };
+    $('#del-c').onclick = async () => { if (await confirmBox(`Xóa hẳn lớp "${c.name}"? Không hoàn tác được.`)) { await api('DELETE', '/admin/classes/' + id); toast('Đã xóa lớp.'); nav('/quan-tri/lop'); } };
+  }
+}, ST);
+
+route(/^\/quan-tri\/giao-bai\/(\d+)$/, async (id) => {
+  const a = await api('GET', '/admin/assignments/' + id);
+  const n = (s) => a.students.filter((x) => s.includes(x.status)).length;
+  const done = n(['done', 'late', 'grading']), left = n(['todo', 'doing', 'missing']);
+  const scored = a.students.filter((x) => x.pct != null), avg = scored.length ? Math.round(scored.reduce((s, x) => s + x.pct, 0) / scored.length) : null;
+  const order = { missing: 0, todo: 1, doing: 2, grading: 3, late: 4, done: 5 };
+  const rows = [...a.students].sort((x, y) => order[x.status] - order[y.status] || x.name.localeCompare(y.name));
+  adminShell('lop', `<a class="small" href="#/quan-tri/lop/${a.class_id}">← ${esc(a.class_name)}</a>
+    <div class="row between mt"><div><h1 style="margin:0">${esc(a.title)}</h1><div class="small muted">${esc(a.exam_title)} · ${a.question_count} câu · ${a.mode === 'real' ? 'thi thật' : 'luyện tập'} · ${a.max_attempts ? a.max_attempts + ' lượt' : 'không giới hạn lượt'} · đáp án ${a.show_answers === 'after_due' ? 'hiện sau hạn' : 'hiện ngay khi nộp'}</div>
+      <div class="small mt">${a.due_at ? `Hạn nộp <b>${fmtDate(a.due_at)}</b>${a.due_at < Date.now() ? ' <span class="chip">đã hết hạn</span>' : ''}${a.allow_late ? '' : ' · không nhận bài muộn'}` : 'Không đặt hạn nộp'}</div></div>
+      <div class="row" style="gap:6px"><button class="sm" id="ed-a">Sửa</button><button class="sm danger" id="del-a">Xóa</button></div></div>
+    ${a.note ? `<div class="small mt note" style="background:var(--indigo-soft);border-radius:8px;padding:6px 10px;white-space:pre-wrap">${esc(a.note)}</div>` : ''}
+    <div class="grid g4 mt"><div class="card flat"><div class="small muted">Đã nộp</div><div class="stat">${done}/${a.students.length}</div></div><div class="card flat"><div class="small muted">Chưa nộp</div><div class="stat ${left ? 'bad-text' : ''}">${left}</div></div>
+      <div class="card flat"><div class="small muted">Điểm TB (lần tốt nhất)</div><div class="stat">${avg != null ? avg + '%' : '—'}</div></div><div class="card flat"><div class="small muted">Chờ chấm tự luận</div><div class="stat">${n(['grading'])}</div>${n(['grading']) ? '<a class="small" href="#/quan-tri/cham-bai">Đi chấm →</a>' : ''}</div></div>
+    <div class="row between mt2"><h2 style="margin:0">Học viên</h2><button class="accent" id="remind" ${left ? '' : 'disabled'}>🔔 Nhắc ${left} người chưa nộp</button></div>
+    ${rows.length ? `<div class="card tw mt"><table><tr><th>Học viên</th><th>Tình trạng</th><th>Lượt</th><th>Điểm tốt nhất</th><th></th></tr>${rows.map((s) => `<tr><td>${esc(s.name)}<div class="small muted">${esc(s.email)}</div></td><td>${astChip(s.status)}${s.submitted_at ? `<div class="small muted">${fmtDate(s.submitted_at)}</div>` : ''}</td><td>${s.tries}</td>
+      <td>${s.pct != null ? `<b class="${pctCls(s.pct)}">${s.pct}%</b> <span class="small muted">${esc(s.score)}</span>` : '—'}</td><td>${s.attempt_id ? `<a class="btn sm" href="#/ketqua/${s.attempt_id}">Xem bài</a>` : ''}</td></tr>`).join('')}</table></div>` : '<div class="empty">Lớp chưa có học viên.</div>'}
+    <h2 class="mt2">Câu cả lớp hay sai</h2>
+    ${a.questions.length ? `<p class="small muted">Tính trên lần nộp tốt nhất của mỗi học viên, câu có tỷ lệ đúng thấp nhất ở trên. Nên chữa những câu này trên lớp.</p>
+      <div class="card tw"><table><tr><th>#</th><th>Câu hỏi</th><th>Tỷ lệ đúng</th><th>Đáp án sai hay chọn</th></tr>${a.questions.map((q) => `<tr><td><a href="#/quan-tri/cau-hoi/${q.id}">${q.id}</a></td><td><div class="jp clamp2" style="max-width:420px">${esc(plainA(q.stem))}</div><div class="small muted">${esc(SECTIONS[q.section] || q.section || '')}</div></td>
+        <td style="min-width:120px"><b class="${pctCls(q.pct)}">${q.pct}%</b> <span class="small muted">(${q.n} bài)</span><div class="bar ${q.pct >= 70 ? 'ok' : 'bad'}"><i style="width:${q.pct}%"></i></div></td>
+        <td class="small">${q.common_wrong ? `<span class="jp">${esc(plainA(q.common_wrong.text))}</span> <span class="muted">(${q.common_wrong.n} người)</span>` : '—'}</td></tr>`).join('')}</table></div>` : '<div class="empty">Chưa có ai nộp bài.</div>'}`);
+  $('#remind').onclick = async () => { const b = $('#remind'); b.disabled = true;
+    try { const r = await api('POST', `/admin/assignments/${id}/remind`); toast(`Đã gửi nhắc nhở tới ${r.reminded} học viên${r.emailed ? ` (kèm ${r.emailed} email)` : ''}.`); } catch (e) { b.disabled = false; toast(e.message, true); } };
+  $('#del-a').onclick = async () => { if (await confirmBox(`Xóa bài giao "${a.title}"? Bài học viên đã làm vẫn nằm trong lịch sử của họ nhưng không còn trong bảng điểm lớp.`)) { await api('DELETE', '/admin/assignments/' + id); nav('/quan-tri/lop/' + a.class_id); } };
+  $('#ed-a').onclick = () => modal(assignForm([], a), (m, close) => { $('#as-x', m).onclick = close;
+    $('#asf', m).onsubmit = async (e) => { e.preventDefault(); const v = readAssignForm(m); delete v.exam_id;
+      try { await api('PATCH', '/admin/assignments/' + id, v); close(); toast('Đã lưu.'); render(); } catch (er) { toast(er.message, true); } }; });
+}, ST);
+const plainA = (s) => String(s || '').replace(/<[^>]+>/g, '').replace(/\{([^}|]+)\|[^}]+\}/g, '$1').replace(/\s+/g, ' ').trim();

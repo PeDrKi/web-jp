@@ -61,6 +61,30 @@ Sửa code → `git add . && git commit -m "..." && git push`. Render tự build
 - Muốn làm việc trực tiếp với database trên Supabase: sao chép `.env.example` thành `.env`, điền `DATABASE_URL` (và `SUPABASE_*` nếu cần upload file). Cẩn thận: `npm run seed -- --reset` sẽ **xóa sạch** dữ liệu ở database đang trỏ tới.
 - `npm test` luôn chạy trên database tạm (PGlite), không đụng tới Supabase.
 
+## Giữ web không "ngủ" (tùy chọn)
+
+Web có sẵn đường dẫn kiểm tra `https://<tên-web>.onrender.com/api/health`. Chỉ cần **một** lịch gọi đường dẫn này **mỗi 10 phút**:
+- Render: được gọi đều đặn nên không ngủ (Render free ngủ sau 15 phút không có ai vào).
+- Supabase: máy chủ tự hỏi CSDL một câu rất nhẹ lúc vừa khởi động và sau đó **6 ngày một lần** (Supabase free tạm dừng khi 7 ngày không hoạt động). Các lần gọi khác không chạm CSDL (trả `"db":"skipped"`). Muốn đổi số ngày, đặt biến môi trường `DB_PING_DAYS` trên Render. Muốn kiểm tra CSDL ngay, mở `/api/health?db=1`.
+
+Không cần lịch gọi riêng cho Supabase. Chọn **một** trong hai dịch vụ miễn phí:
+
+**UptimeRobot** (uptimerobot.com, có cả app điện thoại)
+1. Đăng ký, bấm **New monitor**.
+2. Monitor type: **HTTP(s)**. URL: đường dẫn `/api/health` ở trên.
+3. Monitoring interval: **10 phút** (dưới 15 phút là được).
+4. Bật thông báo email: web sập thì bạn nhận email ngay.
+
+**cron-job.org**
+1. Đăng ký, bấm **Create cronjob**.
+2. URL: đường dẫn `/api/health`. Execution schedule: **Every 10 minutes**.
+3. Ở phần Notifications, bật báo khi lỗi.
+
+Lưu ý:
+- Render free cho **750 giờ chạy mỗi tháng** cho cả tài khoản. Một web chạy suốt tháng dùng khoảng 720–744 giờ, vừa đủ. Nếu bạn có thêm web free khác cũng đang được giữ thức, tổng sẽ vượt và Render tạm dừng các web đến đầu tháng sau.
+- Lần khởi động lại sau mỗi lần cập nhật (update.bat) vẫn mất khoảng 1 phút như bình thường.
+- Muốn bỏ thì chỉ cần tạm dừng (Pause) monitor, không phải sửa gì trong web.
+
 ## Sao lưu
 - Supabase free không có bản sao lưu tự động tải về được. Định kỳ chạy `pg_dump "<DATABASE_URL>" > backup.sql` (cài PostgreSQL client) hoặc dùng Supabase → Database → Backups nếu gói có.
 - File audio/ảnh nằm trong Storage → bucket `media`.
@@ -72,4 +96,4 @@ Sửa code → `git add . && git commit -m "..." && git push`. Render tự build
 | `password authentication failed` | Sai mật khẩu database; đặt lại ở Supabase → Project Settings → Database. |
 | Tải audio/ảnh báo lỗi kho lưu trữ | Kiểm tra `SUPABASE_URL` và `SUPABASE_SERVICE_KEY` (phải là khóa secret/service_role, không phải khóa publishable/anon). |
 | Mọi người bị đăng xuất sau mỗi lần deploy | Thiếu `APP_SECRET`; đặt một chuỗi ngẫu nhiên dài trong Render → Environment. |
-| Trang mở rất lâu lần đầu | Render free đang "ngủ", chờ 30-60 giây. |
+| Trang mở rất lâu lần đầu | Render free đang "ngủ", chờ 30-60 giây. Cài UptimeRobot theo mục "Giữ web không ngủ" để tránh. |

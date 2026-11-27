@@ -8,7 +8,7 @@ services:
     region: singapore          # chọn cùng khu vực với project Supabase để nhanh hơn
     buildCommand: npm ci
     startCommand: npm start
-    healthCheckPath: /api/me
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production

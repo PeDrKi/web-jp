@@ -366,8 +366,47 @@ route(/^\/lam\/(\d+)$/, async (id) => {
     try { await api('POST', `/attempts/${id}/submit`); try { localStorage.removeItem(key); } catch {} nav('/ketqua/' + id); }
     catch (e) { submitting = false; toast(e.message, true); }
   }
+  // Đề dạng file (PDF/ảnh scan) + phiếu trả lời: vẽ một lần, bấm đáp án chỉ đổi class để không vẽ lại file đề
+  function sheet() {
+    const noOf = (q, i) => (String(q.stem).match(/\d+/) || [i + 1])[0];
+    const isPdf = /\.pdf(\?|#|$)/i.test(A.doc_url);
+    const row = (q, i) => {
+      const a = ans[q.id] || {};
+      if (q.kind === 'essay') { const long = /viết/.test(q.qtype || '');
+        return `<div class="srow ${long ? 'long' : ''}"><span class="sn">${noOf(q, i)}</span>${long ? `<textarea class="jp" rows="3" data-sq="${q.id}" maxlength="5000" aria-label="Câu ${noOf(q, i)}">${esc(a.t || '')}</textarea>` : `<input class="jp" data-sq="${q.id}" maxlength="300" value="${esc(a.t || '')}" aria-label="Câu ${noOf(q, i)}" autocomplete="off">`}</div>`; }
+      return `<div class="srow" role="radiogroup" aria-label="Câu ${noOf(q, i)}"><span class="sn">${noOf(q, i)}</span>${q.options.map((o, k) => `<button class="bub ${a.c === k ? 'on' : ''}" role="radio" aria-checked="${a.c === k}" data-q="${q.id}" data-i="${k}">${esc(o)}</button>`).join('')}</div>`;
+    };
+    view(`
+    <div class="exam-bar">
+      <div style="flex:1;min-width:150px"><b>${esc(A.title)}</b><div class="small muted">${real ? 'Chế độ thi thật' : 'Chế độ luyện tập'} · <span id="save-ind" class="save-ind"></span></div></div>
+      ${A.deadline ? `<div class="timer" id="timer" aria-live="off">--:--</div>` : ''}
+      <div class="small muted"><span id="s-done">0</span>/${qs.length} câu</div>
+      <button class="accent sm" id="t-submit">Nộp bài</button>
+    </div>
+    <div class="tabs show-m sheet-tabs" role="tablist"><button class="tab on" data-pane="doc" role="tab">Đề thi</button><button class="tab" data-pane="sheet" role="tab">Phiếu trả lời</button></div>
+    <div class="sheet-wrap" data-show="doc">
+      <div class="card doc-pane" id="doc-pane"><div class="row between mb"><b>Đề thi</b><a class="small" href="${esc(A.doc_url)}" target="_blank" rel="noopener">Mở file đề ↗</a></div>
+        <div id="doc-pages">${isPdf ? '<div class="muted small">Đang tải đề…</div>' : `<img src="${esc(A.doc_url)}" alt="Đề thi" class="doc-img">`}</div></div>
+      <aside class="card sheet-pane" id="sheet-pane" aria-label="Phiếu trả lời"><h3 style="margin-top:0">Phiếu trả lời</h3>
+        ${A.sections.map((s) => `<div class="small muted mt"><b>${esc(s.name)}</b></div>${qs.slice(s.from, s.from + s.count).map((q, k) => row(q, s.from + k)).join('')}`).join('')}
+        <p class="small muted mt">${real ? 'Bài được lưu tự động. Nộp bài để xem điểm.' : 'Bài được lưu tự động. Nộp bài để xem đáp án và điểm.'}</p>
+        <button class="accent" id="s-submit" style="width:100%">Nộp bài</button></aside>
+    </div>`);
+    const count = () => { const d = $('#s-done'); if (d) d.textContent = qs.filter(isDone).length; };
+    count();
+    const pane = $('#sheet-pane');
+    pane.onclick = (e) => { const b = e.target.closest('.bub'); if (!b) return; const qid = Number(b.dataset.q), k = Number(b.dataset.i);
+      const v = ans[qid]?.c === k ? null : k;   // bấm lại để bỏ chọn
+      change(qid, { c: v });
+      $$(`.bub[data-q="${qid}"]`, pane).forEach((x) => { const on = v != null && Number(x.dataset.i) === v; x.classList.toggle('on', on); x.setAttribute('aria-checked', on); }); count(); };
+    pane.oninput = (e) => { const t = e.target; if (!t.dataset.sq) return; typeEssay(Number(t.dataset.sq), t.value); count(); };
+    $('#t-submit').onclick = submit; $('#s-submit').onclick = submit;
+    $$('.sheet-tabs [data-pane]').forEach((b) => b.onclick = () => { $$('.sheet-tabs .tab').forEach((x) => x.classList.toggle('on', x === b)); $('.sheet-wrap').dataset.show = b.dataset.pane; scrollTo(0, 0); });
+    if (isPdf) renderPdf(A.doc_url, $('#doc-pages'));
+  }
   // Phím tắt: số chọn đáp án, mũi tên chuyển câu, F đánh dấu (không bắt khi đang gõ)
   const onKey = (e) => {
+    if (A.doc_url) return;
     if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('.modal')) return;
     const q = qs[cur];
     if (/^[1-6]$/.test(e.key) && q.kind !== 'essay' && !checked[q.id]) { const i = Number(e.key) - 1; if (i < q.options.length) { change(q.id, { c: i }); draw(); } }
@@ -383,8 +422,36 @@ route(/^\/lam\/(\d+)$/, async (id) => {
     };
     const iv = setInterval(tick, 1000); S.cleanup.push(() => clearInterval(iv));
   }
-  draw();
+  if (A.doc_url) sheet(); else draw();
 }, { auth: true, focus: true });
+
+// Vẽ file đề PDF thành ảnh từng trang (pdf.js tự lưu trên máy chủ), chạy được trên điện thoại
+let pdfjsLoad = null;
+function loadPdfjs() {
+  return pdfjsLoad ||= new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = '/vendor/pdfjs/pdf.min.js';
+    sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js'; ok(window.pdfjsLib); }; sc.onerror = () => { pdfjsLoad = null; fail(new Error('pdfjs')); }; document.head.appendChild(sc); });
+}
+async function renderPdf(url, box) {
+  try {
+    const lib = await loadPdfjs();
+    const pdf = await lib.getDocument({ url }).promise;
+    if (!box.isConnected) return;
+    box.innerHTML = '';
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const pages = [];
+    for (let n = 1; n <= pdf.numPages; n++) { const c = document.createElement('canvas'); c.className = 'doc-page'; c.dataset.n = n; c.setAttribute('aria-label', `Trang ${n}`); box.appendChild(c); pages.push(c); }
+    const draw = async (c) => { if (c.dataset.done) return; c.dataset.done = 1;
+      const page = await pdf.getPage(Number(c.dataset.n)); const w = box.clientWidth || 600; const v0 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: (w / v0.width) * dpr });
+      c.width = vp.width; c.height = vp.height; c.style.aspectRatio = `${vp.width} / ${vp.height}`;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise; };
+    // đặt sẵn tỉ lệ trang để cuộn không bị nhảy, chỉ vẽ trang sắp hiện ra
+    const first = await pdf.getPage(1); const v1 = first.getViewport({ scale: 1 }); pages.forEach((c) => { c.style.aspectRatio = `${v1.width} / ${v1.height}`; });
+    if ('IntersectionObserver' in window) { const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); draw(e.target); } }), { rootMargin: '600px 0px' }); pages.forEach((c) => io.observe(c)); S.cleanup.push(() => io.disconnect()); }
+    else for (const c of pages) await draw(c);
+  } catch (e) {
+    if (box.isConnected) box.innerHTML = `<div class="alert warn">Không hiển thị được file đề ngay trên trang. Bấm <a href="${esc(url)}" target="_blank" rel="noopener">Mở file đề</a> để xem trong tab mới, rồi quay lại tô phiếu trả lời.</div>`;
+  }
+}
 
 /* ---------- Kết quả & xem lại (FR-11..FR-14, FR-18, FR-20, FR-21) ---------- */
 route(/^\/ketqua\/(\d+)$/, async (id) => {
@@ -408,7 +475,7 @@ route(/^\/ketqua\/(\d+)$/, async (id) => {
   const draw = () => {
     view(`${A.review_of ? `<a class="small" href="#/quan-tri/giao-bai/${A.assignment_id}">← Bài giao</a><h1 class="mt">${esc(A.title)}</h1>
     <div class="alert info mb">Bạn đang xem bài làm của học viên <b>${esc(A.review_of.name)}</b> (${esc(A.review_of.email)}), nộp lúc ${fmtDate(A.submitted_at)}.</div><div class="hide-review">` : `<a class="small" href="#/lich-su">← Lịch sử</a><h1 class="mt">${esc(A.title)}</h1><div>`}
-    <div class="row mb">${retryable ? `<button class="accent" id="retry">↻ Làm lại ${retryable} câu sai</button>` : ''}${A.exam_id ? `<a class="btn" href="#/de/${A.exam_id}">Làm lại cả đề</a>` : ''}<a class="btn ghost" href="#review-h">Xem lại từng câu ↓</a></div></div>
+    <div class="row mb">${A.doc_url ? `<a class="btn" href="${esc(A.doc_url)}" target="_blank" rel="noopener">Xem file đề ↗</a>` : ''}${retryable && !A.doc_url ? `<button class="accent" id="retry">↻ Làm lại ${retryable} câu sai</button>` : ''}${A.exam_id ? `<a class="btn" href="#/de/${A.exam_id}">Làm lại cả đề</a>` : ''}<a class="btn ghost" href="#review-h">Xem lại từng câu ↓</a></div></div>
     <div class="card score-card">
       <div class="ring" style="--p:${pct};--c:${hasScale ? (R.passed ? 'var(--ok)' : 'var(--vermilion)') : 'var(--indigo)'}"><div><div><b>${hasScale ? R.score : usePts ? R.points : R.correct}</b><div class="small muted">/ ${hasScale ? R.maxScore : usePts ? R.maxPoints : R.total}</div></div></div></div>
       <div>
@@ -438,7 +505,7 @@ route(/^\/ketqua\/(\d+)$/, async (id) => {
       <div class="explain">${rich(q.explanation)}${q.audio_script?.length ? `<details class="mt"><summary>Văn bản bài nghe</summary>${q.audio_script.map((l) => `<div class="jp">${l.speaker === 'F' ? '女' : '男'}：${rich(l.text)}</div>`).join('')}</details>` : ''}</div>
       <div class="row mt small">${(q.tags.grammar || []).map((t) => `<a class="chip" href="#/ngu-phap/${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}${(q.tags.kanji || []).map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
       ${q.lessons?.length ? `<div class="alert info mt small"><b>Dùng ngoài đời ở đâu?</b> ${q.lessons.map((l) => `<a href="#/doi-song/${l.id}">${esc(l.title)} (${esc(l.level)})</a>`).join(' · ')}</div>` : ''}
-      <div class="row mt"><button class="sm" data-card="${q.id}">＋ Lưu vào flashcard</button><button class="sm" data-cm="${q.id}">Bình luận (${q.comment_count})</button><button class="sm" data-rp="${q.id}">⚠ Báo lỗi</button></div>
+      <div class="row mt">${A.doc_url ? '' : `<button class="sm" data-card="${q.id}">＋ Lưu vào flashcard</button>`}<button class="sm" data-cm="${q.id}">Bình luận (${q.comment_count})</button><button class="sm" data-rp="${q.id}">⚠ Báo lỗi</button></div>
       <div id="cm${q.id}"></div></div>`;
   }
   function essayReview({ q, i, it }) {

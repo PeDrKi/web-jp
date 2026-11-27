@@ -43,7 +43,7 @@ const examOut = (e) => {
   const secs = j(e.sections, []);
   const qids = secs.flatMap((s) => s.question_ids);
   return { id: e.id, title: e.title, exam_type: e.exam_type, level: e.level, duration_min: e.duration_min, description: e.description,
-    sections: secs.map((s) => ({ key: s.key, name: s.name, count: s.question_ids.length })), question_count: qids.length };
+    sections: secs.map((s) => ({ key: s.key, name: s.name, count: s.question_ids.length })), question_count: qids.length, doc: !!e.doc_url };
 };
 router.get('/exams', wrap(async (req, res) => {
   const { exam_type, level, section, q } = req.query;
@@ -64,13 +64,13 @@ router.get('/search', wrap(async (req, res) => {
       ...j(l.dialogue, []).flatMap((d) => [C.stripMarkup(d.ja), d.vi]), ...j(l.phrases, []).flatMap((p) => [C.stripMarkup(p.ja), p.vi])].join(' ');
     return C.normalize(hay).includes(q) || hay.includes(req.query.q);
   }).map((l) => ({ id: l.id, title: l.title, level: l.level, situation: l.situation, summary: l.summary }));
-  const qs = (await db.prepare("SELECT id,level,section,stem FROM questions WHERE status='published'").all())
+  const qs = (await db.prepare("SELECT id,level,section,stem FROM questions WHERE status='published' AND is_sheet=0").all())
     .filter((x) => C.normalize(C.stripMarkup(x.stem)).includes(q) || C.stripMarkup(x.stem).includes(req.query.q)).slice(0, 10)
     .map((x) => ({ id: x.id, level: x.level, section: x.section, stem: C.stripMarkup(x.stem).slice(0, 80) }));
   res.json({ exams, lessons, questions: qs });
 }));
 router.get('/practice/options', wrap(async (req, res) => {
-  const rows = (await db.prepare("SELECT level, section, qtype, COUNT(*) n FROM questions WHERE status='published' GROUP BY level, section, qtype").all());
+  const rows = (await db.prepare("SELECT level, section, qtype, COUNT(*) n FROM questions WHERE status='published' AND is_sheet=0 GROUP BY level, section, qtype").all());
   res.json(rows);
 }));
 
@@ -84,7 +84,7 @@ function shuffleOptions(q) {
 async function loadQuestions(ids) {
   if (!ids.length) return [];
   const rows = new Map((await db.prepare("SELECT * FROM questions WHERE id = ANY(?) AND status='published'").all(ids)).map((r) => [r.id, r]));
-  return ids.filter((id) => rows.has(id)).map((id) => shuffleOptions(C.rowToQuestion(rows.get(id))));   // giữ thứ tự trong đề
+  return ids.filter((id) => rows.has(id)).map((id) => { const q = C.rowToQuestion(rows.get(id)); return rows.get(id).is_sheet ? q : shuffleOptions(q); });   // giữ thứ tự trong đề; câu phiếu trả lời giữ nguyên A-B-C-D
 }
 // Bài giao có "hiện đáp án sau hạn nộp": trả về thời điểm được xem đáp án (null nếu xem được ngay)
 async function answersLockedUntil(a) {
@@ -98,7 +98,7 @@ async function attemptView(a, { reveal = false } = {}) {
   const lockedUntil = await answersLockedUntil(a);
   const base = { id: a.id, kind: a.kind, mode: a.mode, title: a.title, level: a.level, status: a.status, exam_id: a.exam_id,
     started_at: a.started_at, deadline: a.deadline, submitted_at: a.submitted_at, server_now: now(), leaves: a.leaves,
-    sections: snap.sections || [], answers, plays: j(a.plays, {}), play_limit: a.mode === 'real' ? 1 : 0, assignment_id: a.assignment_id || null, answers_locked_until: lockedUntil };
+    sections: snap.sections || [], answers, plays: j(a.plays, {}), play_limit: a.mode === 'real' ? 1 : 0, assignment_id: a.assignment_id || null, answers_locked_until: lockedUntil, doc_url: snap.doc_url || '' };
   if (a.status === 'submitted' && lockedUntil && !reveal) {   // chỉ cho xem điểm, chưa cho xem đáp án
     const r = j(a.result, null);
     base.questions = snap.questions.map(C.publicQuestion);
@@ -133,7 +133,7 @@ const ownAttempt = async (req, res) => {
 
 router.post('/attempts', A.requireUser, wrap(async (req, res) => {
   let { exam_id, mode, practice } = req.body || {};
-  let questions, title, level, deadline = null, scoring = null, examVersion = null, sections = [], assignment = null;
+  let questions, title, level, deadline = null, scoring = null, examVersion = null, sections = [], assignment = null, docUrl = '';
   if (req.body?.assignment_id) {   // bài giảng viên giao cho lớp
     assignment = await db.prepare('SELECT s.* FROM assignments s JOIN class_members m ON m.class_id=s.class_id JOIN classes c ON c.id=s.class_id WHERE s.id=? AND m.user_id=? AND c.archived=0').get(Number(req.body.assignment_id), req.user.id);
     if (!assignment) return bad(res, 'Không tìm thấy bài được giao.', 404);
@@ -156,7 +156,7 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
       sections.push({ key: s.key, name: s.name, from: questions.length, count: qs.length });
       questions.push(...qs);
     }
-    title = (assignment ? assignment.title : e.title) + (only ? ' (theo phần)' : ''); level = e.level; scoring = JSON.parse(e.scoring); examVersion = e.version;
+    title = (assignment ? assignment.title : e.title) + (only ? ' (theo phần)' : ''); level = e.level; scoring = JSON.parse(e.scoring); examVersion = e.version; docUrl = e.doc_url || '';
     if (mode === 'real') { if (only) return bad(res, 'Chế độ thi thật phải làm trọn bộ đề.'); deadline = now() + e.duration_min * 60e3; }
   } else if (practice && practice.retry) {   // làm lại các câu sai của một bài đã nộp
     const src = await db.prepare("SELECT * FROM attempts WHERE id=? AND user_id=? AND status='submitted'").get(Number(practice.retry), req.user.id);
@@ -169,7 +169,7 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
     title = 'Làm lại câu sai: ' + src.title.replace(/^Làm lại câu sai: /, ''); level = src.level || '';
   } else if (practice) {
     const { level: lv, section, qtype, count, grammar } = practice;
-    const where = ["status='published'"], args = [];
+    const where = ["status='published'", 'is_sheet=0'], args = [];
     if (lv) { where.push('level=?'); args.push(lv); }
     if (section) { where.push('section=?'); args.push(section); }
     if (qtype) { where.push('qtype=?'); args.push(qtype); }
@@ -184,7 +184,7 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
   const m = mode === 'real' && exam_id ? 'real' : 'practice';
   const r = (await db.prepare(`INSERT INTO attempts(user_id,kind,exam_id,exam_version,mode,title,level,snapshot,started_at,deadline,assignment_id)
     VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(req.user.id, kind, exam_id || null, examVersion, m, title, level,
-    JSON.stringify({ questions, sections, scoring }), now(), deadline, assignment?.id || null));
+    JSON.stringify({ questions, sections, scoring, ...(docUrl ? { doc_url: docUrl } : {}) }), now(), deadline, assignment?.id || null));
   res.json((await attemptView((await db.prepare('SELECT * FROM attempts WHERE id=?').get(r.lastInsertRowid)))));
 }));
 
@@ -323,7 +323,7 @@ router.get('/lessons/:id', wrap(async (req, res) => {
   const l = (await db.prepare("SELECT * FROM lessons WHERE id=? AND status='published'").get(Number(req.params.id)));
   if (!l) return bad(res, 'Không tìm thấy bài học.', 404);
   const quiz = j(l.quiz, []);
-  const related = (await db.prepare("SELECT q.id, q.level, q.section, q.stem, q.tags FROM questions q WHERE q.status='published'").all())
+  const related = (await db.prepare("SELECT q.id, q.level, q.section, q.stem, q.tags FROM questions q WHERE q.status='published' AND q.is_sheet=0").all())
     .filter((q) => (j(q.tags, {}).grammar || []).some((g) => j(l.grammar_tags, []).includes(g))).slice(0, 4)
     .map((q) => ({ id: q.id, level: q.level, section: q.section, stem: C.stripMarkup(q.stem).slice(0, 70) }));
   res.json({ id: l.id, title: l.title, situation: l.situation, level: l.level, summary: l.summary, dialogue: j(l.dialogue, []), vocab: j(l.vocab, []),

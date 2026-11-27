@@ -357,6 +357,10 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   googleInfo = { ...googleInfo, aud: 'test-client', email_verified: 'false' };
   r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'email Google chưa xác minh bị từ chối');
 
+  r = await call('khach', 'GET', '/health'); ok(r.s === 200 && r.d.ok === true && r.d.db === true, 'kiểm tra sống: lần đầu sau khởi động có truy vấn CSDL');
+  r = await call('khach', 'GET', '/health'); ok(r.s === 200 && r.d.ok === true && r.d.db === 'skipped' && r.d.next_db_ping - Date.now() > 5 * 864e5, 'các lần sau không chạm CSDL, 6 ngày mới chạm lại');
+  r = await call('khach', 'GET', '/health?db=1'); ok(r.s === 200 && r.d.db === true, 'kiểm tra sống ?db=1 luôn truy vấn CSDL');
+  r = { s: (await fetch(base + '/health', { method: 'HEAD' })).status }; ok(r.s === 200, 'kiểm tra sống nhận cả HEAD (UptimeRobot)');
   console.log('Lớp học & giao bài');
   r = await call('hv', 'POST', '/admin/classes', { name: 'X' }); ok(r.s === 403, 'học viên không tạo được lớp');
   r = await call('gv', 'POST', '/admin/classes', { name: 'N5 tối thứ 3' }); ok(r.s === 200 && /^[A-Z2-9]{6}$/.test(r.d.code), 'giảng viên tạo lớp, có mã 6 ký tự');
@@ -399,6 +403,48 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('hv', 'POST', `/classes/${cls.id}/leave`); r = await call('hv', 'GET', '/classes'); ok(r.d.classes.length === 0, 'học viên rời lớp');
   r = await call('gv', 'DELETE', `/admin/classes/${cls.id}`); ok(r.s === 200, 'xóa lớp');
   r = await call('hv', 'GET', `/attempts/${cat1.id}`); ok(r.s === 200, 'bài đã làm vẫn còn sau khi xóa lớp');
+
+  console.log('Tải đề PDF/Word');
+  const txt = Buffer.from('問題1 ＿＿の言葉の読み方として最もよいものを、A・B・C・Dから一つ選びなさい。\n1. 学校へ行きます。\nA. がっこう B. がこう C. がっこ D. かっこう\n2. 先生に聞きます。\nA. せんせ\nB. せんせい\nC. せいせい\nD. ぜんせい\n');
+  r = await call('hv', 'POST', '/admin/import/document', txt, { 'content-type': 'application/octet-stream', 'x-filename': 'de.txt' }); ok(r.s === 403, 'học viên không được tải đề');
+  r = await call('gv', 'POST', '/admin/import/document', Buffer.from('xin chào'), { 'content-type': 'application/octet-stream', 'x-filename': 'a.txt' }); ok(r.s === 422, 'file gần như không có chữ → báo file scan');
+  r = await call('gv', 'POST', '/admin/import/document', txt, { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent('đề 1.txt') });
+  const pd = r.d; ok(r.s === 200 && pd.count === 2 && pd.sections[0].questions[1].options.length === 4 && pd.sections[0].questions[1].options[1] === 'せんせい', 'tách câu và phương án (cùng dòng / xuống dòng)');
+  r = await call('gv', 'POST', '/admin/import/document/commit', { title: 'Đề tải lên', level: 'N5', minutes: 30, sections: pd.sections }); ok(r.s === 422 && r.d.errors.length === 2, 'chưa chọn đáp án → báo từng câu');
+  r = await call('gv', 'POST', '/admin/import/document/key', { doc: pd, key: '1.A 2.B' }); ok(r.d.applied === 2 && r.d.doc.sections[0].questions[1].answer === 1, 'dán bảng đáp án');
+  r = await call('gv', 'POST', '/admin/import/document/commit', { title: 'Đề tải lên', level: 'N5', minutes: 30, sections: r.d.doc.sections }); const dEx = r.d;
+  ok(r.s === 200 && dEx.questions === 2 && dEx.status === 'published', 'tạo câu hỏi + đề từ file');
+  r = await call('hv', 'POST', '/attempts', { exam_id: dEx.id, mode: 'practice' }); ok(r.s === 200 && r.d.questions.length === 2, 'học viên làm được đề vừa tải');
+
+  console.log('Đề scan + phiếu trả lời');
+  r = await call('gv', 'POST', '/admin/media', Buffer.from('%PDF-1.4\n%test\n'), { 'content-type': 'application/octet-stream', 'x-filename': 'de-scan.pdf' }); const pdfU = r.d.url; ok(r.s === 200 && /\.pdf$/.test(pdfU), 'tải file đề PDF vào kho');
+  const groups = [{ name: 'Trắc nghiệm', from: 1, to: 3, type: 'mcq', n: 4 }, { name: 'Đúng sai', from: 4, to: 5, type: 'tf' }, { name: 'Điền từ', from: 6, to: 6, type: 'text', points: 2 }, { name: 'Viết', from: 7, to: 7, type: 'essay', points: 5, section: 'writing' }];
+  const sheet = { title: 'Đề scan', level: 'N4', minutes: 45, doc_url: pdfU, groups, answers: { 1: 2, 2: 0, 3: 3, 4: 0, 5: 1, 6: 'たべます' } };
+  r = await call('gv', 'POST', '/admin/import/sheet', { ...sheet, doc_url: 'https://example.com/x.pdf' }); ok(r.s === 400, 'file đề phải nằm trong kho');
+  r = await call('gv', 'POST', '/admin/import/sheet', { ...sheet, groups: [...groups, { name: 'Trùng', from: 3, to: 4, type: 'mcq' }] }); ok(r.s === 400, 'nhóm câu trùng số bị từ chối');
+  r = await call('gv', 'POST', '/admin/import/sheet', { ...sheet, answers: { 1: 2 } }); ok(r.s === 422 && r.d.missing.join() === '2,3,4,5,6', 'báo câu chưa có đáp án');
+  r = await call('gv', 'POST', '/admin/import/sheet', sheet); const shEx = r.d; ok(r.s === 200 && shEx.questions === 7, 'tạo đề phiếu trả lời');
+  r = await call('hv', 'GET', '/exams'); ok(r.d.find((e) => e.id === shEx.id)?.doc === true, 'kho đề đánh dấu đề có file');
+  r = await call('hv', 'POST', '/attempts', { exam_id: shEx.id, mode: 'real' }); const shA = r.d;
+  ok(shA.doc_url === pdfU && shA.questions.length === 7 && shA.questions[0].options.join('') === 'ABCD' && shA.questions[0].stem === 'Câu 1' && shA.sections.length === 4, 'bài làm có file đề, phương án giữ nguyên A-B-C-D');
+  const qn = (n) => shA.questions[n - 1].id;
+  await call('hv', 'PUT', `/attempts/${shA.id}/answers`, { answers: { [qn(1)]: { c: 2 }, [qn(2)]: { c: 1 }, [qn(3)]: { c: 3 }, [qn(4)]: { c: 0 }, [qn(6)]: { t: 'タベマス' }, [qn(7)]: { t: '私の町は…' } } });
+  await call('hv', 'POST', `/attempts/${shA.id}/submit`);
+  r = await call('hv', 'GET', `/attempts/${shA.id}`); const it = r.d.result.items;
+  ok(it[0].ok && !it[1].ok && it[2].ok && it[3].ok && !it[4].ok && it[5].ok && r.d.result.pending_grading === 1, 'chấm phiếu trả lời (trắc nghiệm, đúng/sai, điền ngắn tự chấm, tự luận chờ chấm)');
+  r = await call('hv', 'GET', '/practice/options'); ok(!r.d.some((o) => o.qtype.startsWith('Phiếu trả lời')), 'câu phiếu trả lời không lẫn vào luyện tập');
+
+  console.log('Thay đề mẫu');
+  r = await call('gv', 'GET', '/admin/sample'); ok(r.s === 403, 'chỉ quản trị viên được thay đề mẫu');
+  r = await call('adm', 'GET', '/admin/sample'); ok(r.s === 200 && r.d.old.length === 8 && r.d.has_new === false, 'liệt kê 8 đề cài sẵn');
+  const nBefore = (await call('adm', 'GET', '/admin/questions')).d.total;
+  r = await call('adm', 'POST', '/admin/sample/replace'); const rep = r.d;
+  ok(r.s === 200 && rep.deleted_exams === 8 && rep.deleted_questions > 50 && rep.created?.questions === 153, 'xóa đề cài sẵn, nạp đề Chuyên 10 số 01');
+  r = await call('hv', 'GET', '/exams'); ok(!r.d.some((e) => /Đề mô phỏng rút gọn/.test(e.title)) && r.d.some((e) => e.id === rep.created.id && e.question_count === 153), 'kho đề chỉ còn đề thật + đề mẫu mới');
+  r = await call('adm', 'GET', '/admin/questions'); ok(r.d.total === nBefore - rep.deleted_questions + 153, 'câu hỏi của đề cài sẵn bị xóa theo');
+  r = await call('adm', 'GET', '/admin/courses'); ok(!r.d.some((c) => c.steps.some((s) => s.type === 'exam' && /Đề mô phỏng rút gọn/.test(s.ref))), 'khóa học bỏ bước làm đề đã xóa');
+  r = await call('hv', 'POST', '/attempts', { exam_id: rep.created.id, mode: 'practice' }); ok(r.s === 200 && r.d.questions.length === 153, 'học viên làm được đề mẫu mới');
+  r = await call('adm', 'POST', '/admin/sample/replace'); ok(r.d.deleted_exams === 0 && r.d.created === null, 'bấm lại không làm gì thêm');
 
   console.log('Quyền riêng tư');
   r = await call('u2', 'POST', '/auth/register', { email: 'c@d.vn', password: 'matkhau123' });

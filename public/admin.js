@@ -23,8 +23,8 @@ const can = { edit: () => ['admin', 'editor', 'teacher'].includes(S.user.role), 
 
 function adminShell(active, html) {
   const items = isTeacher()
-    ? [['', 'Tổng quan'], ['lop', 'Lớp học'], ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Tải đề lên (Excel/CSV)'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bao-loi', 'Báo lỗi'], ['media', 'Kho audio/ảnh']]
-    : [['', 'Tổng quan'], ...(can.admin() ? [['lop', 'Lớp học']] : []), ['cau-hoi', 'Ngân hàng câu hỏi'], ['nhap', 'Nhập hàng loạt'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bai-hoc', 'Bài đời sống'], ['ngu-phap', 'Ngữ pháp'], ['khoa-hoc', 'Khóa học'], ['bao-loi', 'Báo lỗi'], ['binh-luan', 'Bình luận'], ['thong-ke', 'Báo cáo câu hỏi'], ['media', 'Kho audio/ảnh'], ...(can.admin() ? [['nguoi-dung', 'Người dùng']] : [])];
+    ? [['', 'Tổng quan'], ['lop', 'Lớp học'], ['cau-hoi', 'Ngân hàng câu hỏi'], ['tai-de', 'Tải đề PDF/Word'], ['nhap', 'Tải đề lên (Excel/CSV)'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bao-loi', 'Báo lỗi'], ['media', 'Kho audio/ảnh']]
+    : [['', 'Tổng quan'], ...(can.admin() ? [['lop', 'Lớp học']] : []), ['cau-hoi', 'Ngân hàng câu hỏi'], ['tai-de', 'Tải đề PDF/Word'], ['nhap', 'Nhập hàng loạt'], ['de', 'Đề thi'], ['cham-bai', 'Chấm tự luận'], ['bai-hoc', 'Bài đời sống'], ['ngu-phap', 'Ngữ pháp'], ['khoa-hoc', 'Khóa học'], ['bao-loi', 'Báo lỗi'], ['binh-luan', 'Bình luận'], ['thong-ke', 'Báo cáo câu hỏi'], ['media', 'Kho audio/ảnh'], ...(can.admin() ? [['nguoi-dung', 'Người dùng']] : [])];
   view(`<div class="admin-wrap"><nav class="admin-nav card flat" aria-label="Quản trị">${items.map(([k, t]) => `<a href="#/quan-tri${k ? '/' + k : ''}" class="${k === active ? 'on' : ''}">${t}</a>`).join('')}<div class="small muted" style="padding:8px 12px">Vai trò: ${ROLE[S.user.role]}</div></nav><div id="ad">${html}</div></div>`);
 }
 const ST = { staff: true };
@@ -38,7 +38,22 @@ route(/^\/quan-tri$/, async () => {
     <div class="card"><div class="muted small">Người dùng</div><div class="stat">${o.users}</div></div><div class="card"><div class="muted small">Lượt nộp bài</div><div class="stat">${o.attempts}</div></div>
     ${box('Ngân hàng: trắc nghiệm / tự luận', `${o.bank.mcq} / ${o.bank.essay}`, 'cau-hoi')}${box('Bài tự luận chờ chấm', o.grading_pending, 'cham-bai')}</div>
     ${isTeacher() ? `<div class="alert info mt"><b>Dành cho giảng viên:</b> thêm từng câu (trắc nghiệm hoặc tự luận) ở <a href="#/quan-tri/cau-hoi/moi">Ngân hàng câu hỏi</a>, hoặc <a href="#/quan-tri/nhap">tải cả bộ đề từ Excel/CSV</a>. Giảng viên tự đăng câu hỏi và đề của mình, rồi chấm phần tự luận ở <a href="#/quan-tri/cham-bai">Chấm tự luận</a>.</div>` : ''}
-    <div class="alert info mt">Quy trình nội dung: <b>Nháp → Chờ duyệt → Đã đăng → Đã gỡ</b>. Biên tập viên soạn và gửi duyệt; người duyệt (hoặc quản trị viên) đăng. Chỉ nội dung đã đăng mới đến tay người học.</div>`);
+    <div class="alert info mt">Quy trình nội dung: <b>Nháp → Chờ duyệt → Đã đăng → Đã gỡ</b>. Biên tập viên soạn và gửi duyệt; người duyệt (hoặc quản trị viên) đăng. Chỉ nội dung đã đăng mới đến tay người học.</div><div id="smp"></div>`);
+  if (!can.admin()) return;
+  const sm = await api('GET', '/admin/sample').catch(() => null);
+  if (!sm || (!sm.old.length && sm.has_new)) return;
+  $('#smp').innerHTML = `<div class="card mt"><h3 style="margin-top:0">Đề mẫu</h3>
+    <p class="small">${sm.old.length ? `Web đang có <b>${sm.old.length} đề mô phỏng cài sẵn</b>: ${sm.old.map((e) => esc(e.title)).join(', ')}.` : 'Các đề mô phỏng cài sẵn đã được xóa.'}${sm.has_new ? '' : ` Đề mẫu mới: <b>${esc(sm.new_title)}</b> (153 câu, thang 10).`}</p>
+    <p class="small muted">Bấm nút dưới đây để xóa các đề cài sẵn cùng câu hỏi của chúng${sm.has_new ? '' : ' và đưa đề mẫu mới vào Kho đề'}. Bài học, ngữ pháp, khóa học và tài khoản giữ nguyên. Lịch sử làm bài cũ vẫn còn. Không hoàn tác được.</p>
+    <button class="accent" id="smp-go">${sm.old.length ? `Xóa ${sm.old.length} đề cài sẵn` : ''}${sm.old.length && !sm.has_new ? ', ' : ''}${sm.has_new ? '' : 'dùng đề Chuyên 10 số 01 làm mẫu'}</button></div>`;
+  $('#smp-go').onclick = async () => {
+    if (!(await confirmBox(`${sm.old.length ? `Xóa vĩnh viễn ${sm.old.length} đề cài sẵn và câu hỏi của chúng` : 'Thêm đề mẫu mới'}? Không hoàn tác được.`))) return;
+    const b = $('#smp-go'); b.disabled = true;
+    try { const r = await api('POST', '/admin/sample/replace');
+      toast(`Đã xóa ${r.deleted_exams} đề, ${r.deleted_questions} câu hỏi${r.created ? `; đã thêm đề mẫu mới (${r.created.questions} câu)` : ''}.`);
+      $('#smp').innerHTML = `<div class="alert ok mt">Xong. ${r.created ? `<a href="#/de/${r.created.id}">Xem đề mẫu mới</a>` : ''}</div>`;
+    } catch (e) { b.disabled = false; toast(e.message, true); }
+  };
 }, ST);
 
 /* ---- Câu hỏi ---- */
@@ -191,7 +206,7 @@ const CUSTOM_PRESETS = {
 };
 route(/^\/quan-tri\/de$/, async () => {
   const list = await api('GET', '/admin/exams');
-  adminShell('de', `<div class="row between"><h1 style="margin:0">Đề thi</h1>${can.edit() ? '<a class="btn primary" href="#/quan-tri/de/moi">＋ Tạo đề</a>' : ''}</div>
+  adminShell('de', `<div class="row between"><h1 style="margin:0">Đề thi</h1>${can.edit() ? '<div class="row"><a class="btn" href="#/quan-tri/tai-de">⇪ Tải đề PDF/Word</a><a class="btn primary" href="#/quan-tri/de/moi">＋ Tạo đề</a></div>' : ''}</div>
   <div class="card tw mt"><table><tr><th>Đề</th><th>Cấp</th><th>Số câu</th><th>Người tạo</th><th>Trạng thái</th><th></th></tr>${list.map((e) => `<tr><td>${esc(e.title)}<div class="small muted">v${e.version}</div></td><td>${esc(e.exam_type === 'CUSTOM' ? 'Đề GV' : e.exam_type)} ${esc(e.level)}</td><td>${e.sections.reduce((a, s) => a + s.question_ids.length, 0)}</td><td class="small">${esc(e.author || '')}</td><td>${stChip(e.status)}</td><td><a class="btn sm" href="#/quan-tri/de/${e.id}">Mở</a></td></tr>`).join('') || '<tr><td colspan="6" class="empty">Chưa có đề.</td></tr>'}</table></div>`);
 }, ST);
 async function examEditor(id) {
@@ -594,3 +609,211 @@ route(/^\/quan-tri\/giao-bai\/(\d+)$/, async (id) => {
       try { await api('PATCH', '/admin/assignments/' + id, v); close(); toast('Đã lưu.'); render(); } catch (er) { toast(er.message, true); } }; });
 }, ST);
 const plainA = (s) => String(s || '').replace(/<[^>]+>/g, '').replace(/\{([^}|]+)\|[^}]+\}/g, '$1').replace(/\s+/g, ' ').trim();
+
+/* ---- Tải đề từ file PDF / Word ---- */
+route(/^\/quan-tri\/tai-de$/, async () => {
+  if (!can.edit()) return view('<div class="alert bad">Chỉ giảng viên, biên tập viên hoặc quản trị viên được tải đề.</div>');
+  if (S.query.kieu === 'phieu') return sheetBuilder();
+  let D = null, busy = false;
+  const LV = ['N5', 'N4', 'N3', 'N2', 'N1'];
+  const L = 'ABCDEF';
+  const rowsOf = (t, min = 2, max = 8) => Math.max(min, Math.min(max, String(t || '').split('\n').length + Math.floor(String(t || '').length / 70)));
+  const missing = () => D.sections.flatMap((s) => s.questions).filter((q) => q.kind === 'mcq' && !(q.answer >= 0)).length;
+  const total = () => D.sections.reduce((a, s) => a + s.questions.length, 0);
+
+  adminShell('tai-de', `<h1>Tải đề thi từ file PDF / Word</h1>${upTabs('chu')}
+    <div class="card"><p class="muted" style="margin-top:0">Chọn file đề, hệ thống tự tách thành từng câu. Bạn xem lại, chọn đáp án đúng (hoặc dán bảng đáp án), rồi bấm <b>Tạo đề</b>. Đề tạo xong nằm trong Kho đề và giao được cho lớp.</p>
+      <input type="file" id="df" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+      <div id="dmsg" class="mt"></div>
+      <details class="mt small"><summary>File cần trình bày thế nào?</summary><ul class="muted">
+        <li>PDF có chữ (xuất từ Word / Google Docs) hoặc file <b>.docx</b>. File scan, ảnh chụp không đọc được.</li>
+        <li>Câu hỏi đánh số <b>1.</b> <b>2.</b> … hoặc <b>Câu 1:</b>; phương án <b>A. B. C. D.</b> (cùng dòng hoặc xuống dòng).</li>
+        <li>Nhóm câu bắt đầu bằng <b>問題 1</b> … kèm yêu cầu; phần lớn bắt đầu bằng <b>第1部</b> hoặc <b>Phần I</b>. Đoạn văn đọc hiểu có tiêu đề <b>【…】</b> được gắn vào các câu phía sau.</li>
+        <li>Câu không có phương án thành câu tự luận. Có dòng <b>解答欄 / 訂正 / 読み / Bản dịch</b> phía dưới cũng được.</li>
+        <li>Cuối file có phần <b>ĐÁP ÁN</b> hoặc <b>解答</b> (vd. <code>1.C 2.B 3.A</code>) thì đáp án được điền sẵn.</li></ul></details></div>
+    <div id="dv"></div>`);
+
+  const card = (q, si, qi) => {
+    const id = `${si}-${qi}`, miss = q.kind === 'mcq' && !(q.answer >= 0);
+    return `<div class="card mb dq ${miss ? 'miss' : ''}" id="dq-${id}" data-si="${si}" data-qi="${qi}">
+      <div class="row between"><div class="row" style="gap:6px"><b>Câu ${esc(q.label)}</b>${q.guessed ? '<span class="chip warn">số câu tự đánh</span>' : ''}${miss ? '<span class="chip bad">chưa chọn đáp án</span>' : ''}</div>
+        <div class="row" style="gap:6px"><select data-f="kind" class="sm-sel"><option value="mcq" ${q.kind === 'mcq' ? 'selected' : ''}>Trắc nghiệm</option><option value="essay" ${q.kind === 'essay' ? 'selected' : ''}>Tự luận</option></select>
+        <select data-f="section" class="sm-sel">${Object.entries(SECTIONS).map(([k, t]) => `<option value="${k}" ${q.section === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
+        <label class="inline small">Điểm <input data-f="points" type="number" min="1" max="100" value="${q.points || 1}" style="width:64px"></label>
+        <button class="sm ghost" data-del title="Xóa câu này">✕</button></div></div>
+      <div class="qerr"></div>
+      ${q.passage ? `<details class="mt"><summary class="small">Đoạn văn kèm theo (${q.passage.length} ký tự)</summary><textarea data-f="passage" class="jp" rows="${rowsOf(q.passage, 3, 10)}">${esc(q.passage)}</textarea></details>` : ''}
+      <textarea data-f="stem" class="jp mt" rows="${rowsOf(q.stem)}">${esc(q.stem)}</textarea>
+      ${q.kind === 'mcq' ? `<div class="dopts mt">${q.options.map((o, k) => `<label class="dopt ${q.answer === k ? 'on' : ''}"><input type="radio" name="a-${id}" value="${k}" ${q.answer === k ? 'checked' : ''}><b>${L[k]}</b><input data-opt="${k}" class="jp" value="${esc(o)}"></label>`).join('')}</div>
+        <div class="row mt small" style="gap:6px">${q.options.length < 6 ? '<button class="sm ghost" data-addopt>+ phương án</button>' : ''}${q.options.length > 2 ? '<button class="sm ghost" data-rmopt>− bớt phương án</button>' : ''}<span class="muted">Bấm vào nút tròn để chọn đáp án đúng.</span></div>`
+      : `<div class="grid g2 mt"><div><label class="small">Đáp án tự chấm (nếu khớp thì tự cho điểm, cách nhau dấu |)</label><input data-f="accepted" class="jp" value="${esc(q.accepted || '')}" placeholder="VD: DBAC  hoặc  つづけて"></div>
+        <div><label class="small">Đáp án mẫu / hướng dẫn chấm (giáo viên xem khi chấm)</label><textarea data-f="model_answer" class="jp" rows="2">${esc(q.model_answer || '')}</textarea></div></div>`}
+    </div>`;
+  };
+  const counts = () => { const qs = D.sections.flatMap((s) => s.questions); const m = missing();
+    $('#dcount').innerHTML = `${qs.length} câu · ${qs.filter((q) => q.kind === 'mcq').length} trắc nghiệm · ${qs.filter((q) => q.kind === 'essay').length} tự luận${m ? ` · <b class="bad-text">${m} câu chưa chọn đáp án</b>` : ' · <b class="ok-text">đủ đáp án</b>'}`;
+    $('#dgo').textContent = `Tạo đề (${qs.length} câu)`; };
+  const draw = () => {
+    const nE = D.sections.flatMap((s) => s.questions).filter((q) => q.kind === 'essay').length;
+    $('#dv').innerHTML = `
+      ${D.warnings?.length ? `<div class="alert warn mt">${D.warnings.map(esc).join('<br>')}</div>` : ''}
+      <div class="card mt"><h2 style="margin-top:0">Thông tin đề</h2>
+        <div class="field-row"><div style="flex:2"><label for="dt">Tên đề</label><input id="dt" value="${esc(D.title || '')}" maxlength="150"></div>
+          <div><label for="dl">Cấp độ</label><select id="dl">${LV.map((l) => `<option ${(D.level || 'N3') === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+          <div><label for="dm">Thời gian (phút)</label><input id="dm" type="number" min="5" max="600" value="${D.minutes || 60}"></div>
+          <div><label for="ds">Thang điểm</label><select id="ds"><option value="10">Thang 10</option><option value="100">Thang 100</option></select></div></div>
+        <label class="inline mt"><input type="checkbox" id="dp" checked> Đăng ngay (bỏ chọn để lưu nháp, sửa thêm rồi đăng sau)</label></div>
+      <div class="card mt"><b>Dán bảng đáp án</b> <span class="small muted">(không bắt buộc)</span>
+        <p class="small muted">Ghi theo số câu trên đề, ví dụ: <code>1.C 2.B 3.A</code> · câu sắp xếp <code>41.DBAC</code> · đúng/sai <code>111.○ 112.×</code> · đọc kanji <code>96.つづけて</code>. Mỗi câu cách nhau dấu cách hoặc xuống dòng.</p>
+        <textarea id="dk" rows="3" class="jp" placeholder="1.C 2.B 3.B 4.A …"></textarea><button class="mt" id="dka">Điền đáp án</button></div>
+      ${nE ? `<div class="alert info mt">Có ${nE} câu tự luận. Câu có <b>đáp án tự chấm</b> (sắp xếp, đọc kanji…) được chấm ngay khi học viên nộp; câu còn lại giáo viên chấm ở <b>Chấm tự luận</b>.</div>` : ''}
+      <div id="dqs">${D.sections.map((s, si) => `<div class="dsec" data-si="${si}"><div class="row between mt2"><input data-secname="${si}" value="${esc(s.name)}" style="font-weight:700;flex:1"><span class="small muted" style="margin-left:8px">${s.questions.length} câu</span></div>
+        ${s.questions.map((q, qi) => card(q, si, qi)).join('')}</div>`).join('')}</div>
+      <div class="savebar row between"><span id="dcount" class="small"></span><button class="primary" id="dgo"></button></div>`;
+    counts(); wire();
+  };
+  const at = (el) => { const c = el.closest('.dq'); return c ? { c, q: D.sections[c.dataset.si].questions[c.dataset.qi], si: +c.dataset.si, qi: +c.dataset.qi } : null; };
+  const redrawCard = (x) => { x.c.outerHTML = card(x.q, x.si, x.qi); counts(); };
+  function wire() {
+    const box = $('#dqs');
+    box.oninput = (e) => { const t = e.target;
+      if (t.dataset.secname != null) { D.sections[t.dataset.secname].name = t.value; return; }
+      const x = at(t); if (!x) return;
+      if (t.dataset.opt != null) x.q.options[+t.dataset.opt] = t.value;
+      else if (t.dataset.f && t.tagName !== 'SELECT') x.q[t.dataset.f] = t.dataset.f === 'points' ? Number(t.value) : t.value; };
+    box.onchange = (e) => { const t = e.target, x = at(t); if (!x) return;
+      if (t.type === 'radio') { x.q.answer = Number(t.value); redrawCard(x); return; }
+      if (t.dataset.f === 'kind') { x.q.kind = t.value; if (t.value === 'mcq' && x.q.options.length < 2) { x.q.options = ['', '', '', '']; x.q.answer = -1; } redrawCard(x); return; }
+      if (t.dataset.f === 'section') x.q.section = t.value; };
+    box.onclick = (e) => { const t = e.target.closest('button'); if (!t) return; const x = at(t); if (!x) return;
+      if (t.hasAttribute('data-del')) { D.sections[x.si].questions.splice(x.qi, 1); draw(); }
+      else if (t.hasAttribute('data-addopt')) { x.q.options.push(''); redrawCard(x); }
+      else if (t.hasAttribute('data-rmopt')) { x.q.options.pop(); if (x.q.answer >= x.q.options.length) x.q.answer = -1; redrawCard(x); } };
+    $('#dka').onclick = async () => { try { D.title = $('#dt').value; const r = await api('POST', '/admin/import/document/key', { doc: D, key: $('#dk').value }); const keep = $('#dk').value;
+      D = r.doc; draw(); $('#dk').value = keep; toast(r.applied ? `Đã điền ${r.applied} đáp án.` : 'Không khớp được câu nào. Kiểm tra lại số câu và cách ghi.', !r.applied); } catch (er) { toast(er.message, true); } };
+    $('#dgo').onclick = commit;
+  }
+  async function commit() {
+    if (busy) return; const m = missing();
+    if (m && !(await confirmBox(`Còn ${m} câu trắc nghiệm chưa chọn đáp án. Hệ thống sẽ báo những câu đó để bạn sửa. Tiếp tục kiểm tra?`))) return;
+    busy = true; const b = $('#dgo'); b.disabled = true; $$('.dq .qerr').forEach((x) => { x.innerHTML = ''; });
+    try {
+      const r = await api('POST', '/admin/import/document/commit', { title: $('#dt').value, level: $('#dl').value, minutes: Number($('#dm').value), scale: Number($('#ds').value), publish: $('#dp').checked, sections: D.sections });
+      $('#dv').innerHTML = `<div class="card mt"><h2 style="margin-top:0">Đã tạo đề “${esc($('#dt')?.value || D.title)}”</h2><p>${r.questions} câu đã vào ngân hàng câu hỏi${r.status === 'published' ? ' và đề đã được đăng' : r.status === 'pending' ? ', đề đang chờ người duyệt đăng' : ', đề đang ở trạng thái nháp'}.</p>
+        <div class="row"><a class="btn primary" href="#/de/${r.id}">Xem đề như học viên</a><a class="btn" href="#/quan-tri/de/${r.id}">Sửa đề</a>${['teacher', 'admin'].includes(S.user.role) ? '<a class="btn" href="#/quan-tri/lop">Giao cho lớp</a>' : ''}<a class="btn ghost" href="#/quan-tri/tai-de">Tải đề khác</a></div></div>`;
+      scrollTo(0, 0); toast('Đã tạo đề.');
+    } catch (e) {
+      toast(e.message, true);
+      for (const er of e.data?.errors || []) { const c = [...$$('.dq')].find((el) => +el.dataset.si === er.section && D.sections[er.section].questions[el.dataset.qi]?.label === er.label);
+        if (c) { c.classList.add('miss'); c.querySelector('.qerr').innerHTML = `<div class="alert bad small mt">${er.errors.map(esc).join('; ')}</div>`; } }
+      const first = $('.dq .qerr .alert'); if (first) first.closest('.dq').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } finally { busy = false; const bb = $('#dgo'); if (bb) bb.disabled = false; }
+  }
+  $('#df').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 20 * 1024 * 1024) return toast('File quá lớn (tối đa 20 MB).', true);
+    $('#dmsg').innerHTML = '<div class="small muted">Đang đọc file…</div>'; $('#dv').innerHTML = '';
+    try {
+      D = await api('POST', '/admin/import/document', { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(f.name) }, f);
+      $('#dmsg').innerHTML = `<div class="alert ok">Đã đọc <b>${esc(f.name)}</b>${D.pages ? ` (${D.pages} trang)` : ''}: tách được <b>${total()}</b> câu trong ${D.sections.length} nhóm${D.key_applied ? `, tự điền ${D.key_applied} đáp án từ phần đáp án cuối file` : ''}. Xem lại bên dưới.</div>`;
+      draw();
+    } catch (er) { $('#dmsg').innerHTML = `<div class="alert bad">${esc(er.message)}${er.status === 422 ? '<div class="mt">Đề là file scan hoặc ảnh chụp? Dùng <a href="#/quan-tri/tai-de?kieu=phieu"><b>Đề scan + phiếu trả lời</b></a>: học viên xem file đề và tô đáp án.</div>' : ''}</div>`; }
+    e.target.value = '';
+  };
+}, ST);
+const upTabs = (on) => `<div class="tabs mb" role="tablist"><a class="tab ${on === 'chu' ? 'on' : ''}" href="#/quan-tri/tai-de">Đề có chữ: tự tách câu</a><a class="tab ${on === 'phieu' ? 'on' : ''}" href="#/quan-tri/tai-de?kieu=phieu">Đề scan / ảnh: phiếu trả lời</a></div>`;
+
+/* Đề scan / ảnh chụp: học viên xem file đề, tô phiếu trả lời; giáo viên khai báo nhóm câu và đáp án */
+function sheetBuilder() {
+  const LV = ['N5', 'N4', 'N3', 'N2', 'N1'];
+  const TYPES = [['mcq', 'Trắc nghiệm'], ['tf', 'Đúng / Sai'], ['text', 'Điền ngắn (tự chấm)'], ['essay', 'Tự luận (GV chấm)']];
+  const SECS = Object.entries(SECTIONS).filter(([k]) => k !== 'listening');
+  const P = { doc: null, groups: [{ name: 'Phần 1', from: 1, to: 20, type: 'mcq', n: 4, points: 1, section: 'reading' }], ans: {} };
+  let busy = false;
+  const nums = (g) => { const a = []; const f = Number(g.from), t = Number(g.to); if (Number.isInteger(f) && Number.isInteger(t) && f >= 1 && t >= f && t - f < 400) for (let i = f; i <= t; i++) a.push(i); return a; };
+  const optsOf = (g) => g.type === 'mcq' ? 'ABCDEF'.slice(0, Number(g.n) || 4).split('') : g.type === 'tf' ? ['Đúng', 'Sai'] : [];
+  const need = (g, no) => (g.type === 'mcq' || g.type === 'tf') ? !Number.isInteger(P.ans[no]) || P.ans[no] >= optsOf(g).length : g.type === 'text' ? !String(P.ans[no] ?? '').trim() : false;
+  adminShell('tai-de', `<h1>Tải đề thi từ file PDF / Word</h1>${upTabs('phieu')}
+    <div class="card"><p class="muted" style="margin-top:0">Dùng cho đề <b>scan, ảnh chụp</b> hoặc đề có hình vẽ, bảng biểu khó tách. Học viên xem nguyên file đề và tô đáp án trên <b>phiếu trả lời</b>; hệ thống tự chấm theo đáp án bạn nhập.</p>
+      <h3>1. File đề</h3><input type="file" id="phf" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"><div id="phmsg" class="mt small muted">PDF hoặc ảnh (png, jpg, webp).</div></div>
+    <div class="card mt"><h3 style="margin-top:0">2. Thông tin đề</h3>
+      <div class="field-row"><div style="flex:2"><label for="st">Tên đề</label><input id="pht" maxlength="150" placeholder="VD: Đề thi thử N3 tháng 11"></div>
+        <div><label for="sl">Cấp độ</label><select id="phl">${LV.map((l) => `<option ${l === 'N3' ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div><label for="sm">Thời gian (phút)</label><input id="phm" type="number" min="5" max="600" value="60"></div>
+        <div><label for="ss">Thang điểm</label><select id="phs"><option value="10">Thang 10</option><option value="100">Thang 100</option></select></div></div>
+      <label class="inline mt"><input type="checkbox" id="php" checked> Đăng ngay (bỏ chọn để lưu nháp)</label></div>
+    <div class="card mt"><h3 style="margin-top:0">3. Các nhóm câu trên phiếu</h3><p class="small muted">Ghi số câu theo đúng đề. Ví dụ đề có câu 1-40 trắc nghiệm A-D, câu 41-45 điền từ, câu 46 viết đoạn văn thì tạo 3 nhóm.</p>
+      <div id="phg"></div><button class="sm mt" id="phg-add">＋ Thêm nhóm</button></div>
+    <div class="card mt"><h3 style="margin-top:0">4. Đáp án</h3>
+      <p class="small muted">Dán bảng đáp án theo số câu, ví dụ <code>1.C 2.B 3.A</code>, đúng/sai <code>21.Đ 22.S</code>, điền ngắn <code>41.つづけて</code>. Hoặc bấm trực tiếp vào phiếu bên dưới.</p>
+      <textarea id="phk" rows="3" class="jp" placeholder="1.C 2.B 3.B 4.A …"></textarea><button class="mt" id="phka">Điền đáp án</button>
+      <div id="pha" class="mt"></div></div>
+    <div class="savebar row between"><span id="phcount" class="small"></span><button class="primary" id="phgo">Tạo đề</button></div>
+    <div id="phdone"></div>`);
+  const drawGroups = () => {
+    $('#phg').innerHTML = P.groups.map((g, i) => `<div class="sgrp" data-g="${i}">
+      <div><label class="small">Tên nhóm</label><input data-k="name" value="${esc(g.name)}" maxlength="80"></div>
+      <div><label class="small">Từ câu</label><input data-k="from" type="number" min="1" max="999" value="${esc(g.from)}"></div>
+      <div><label class="small">Đến câu</label><input data-k="to" type="number" min="1" max="999" value="${esc(g.to)}"></div>
+      <div><label class="small">Kiểu</label><select data-k="type">${TYPES.map(([k, t]) => `<option value="${k}" ${g.type === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div ${g.type === 'mcq' ? '' : 'hidden'}><label class="small">Số phương án</label><select data-k="n">${[2, 3, 4, 5, 6].map((n) => `<option value="${n}" ${Number(g.n) === n ? 'selected' : ''}>A–${'ABCDEF'[n - 1]}</option>`).join('')}</select></div>
+      <div><label class="small">Điểm/câu</label><input data-k="points" type="number" min="1" max="100" value="${esc(g.points)}"></div>
+      <div><label class="small">Phần thi</label><select data-k="section">${SECS.map(([k, t]) => `<option value="${k}" ${g.section === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
+      <div class="sgx">${P.groups.length > 1 ? `<button class="sm ghost" data-rm="${i}" title="Xóa nhóm">✕</button>` : ''}</div></div>`).join('');
+  };
+  const drawSheet = () => {
+    $('#pha').innerHTML = P.groups.map((g) => { const ns = nums(g); const o = optsOf(g);
+      return `<div class="small muted mt"><b>${esc(g.name)}</b> · ${ns.length ? `câu ${ns[0]}-${ns[ns.length - 1]}` : '<span class="bad-text">khoảng số câu chưa đúng</span>'}</div>${ns.map((no) => {
+        if (g.type === 'text' || g.type === 'essay') return `<div class="srow ${need(g, no) ? 'need' : ''}" data-row="${no}"><span class="sn">${no}</span><input class="jp" data-an="${no}" value="${esc(P.ans[no] ?? '')}" placeholder="${g.type === 'text' ? 'Đáp án đúng (nhiều đáp án cách nhau |)' : 'Đáp án mẫu cho giáo viên (không bắt buộc)'}"></div>`;
+        return `<div class="srow ${need(g, no) ? 'need' : ''}" data-row="${no}"><span class="sn">${no}</span>${o.map((x, k) => `<button class="bub ${P.ans[no] === k ? 'on' : ''}" data-no="${no}" data-i="${k}">${esc(x)}</button>`).join('')}</div>`; }).join('')}`; }).join('');
+    counts();
+  };
+  const counts = () => { let t = 0, m = 0; const seen = new Set(); let dup = 0;
+    for (const g of P.groups) for (const no of nums(g)) { t++; if (seen.has(no)) dup++; seen.add(no); if (need(g, no)) m++; }
+    $('#phcount').innerHTML = `${t} câu${dup ? ` · <b class="bad-text">${dup} câu trùng số giữa các nhóm</b>` : ''}${m ? ` · <b class="bad-text">${m} câu chưa có đáp án</b>` : t ? ' · <b class="ok-text">đủ đáp án</b>' : ''}${P.doc ? '' : ' · <b class="bad-text">chưa tải file đề</b>'}`;
+    $('#phgo').textContent = `Tạo đề (${t} câu)`;
+    $$('#pha .srow').forEach((r) => { const no = Number(r.dataset.row); const g = P.groups.find((x) => nums(x).includes(no)); if (g) r.classList.toggle('need', need(g, no)); });
+  };
+  drawGroups(); drawSheet();
+  $('#phg').oninput = (e) => { const t = e.target, el = t.closest('[data-g]'); if (!el || !t.dataset.k) return; const g = P.groups[el.dataset.g];
+    g[t.dataset.k] = ['from', 'to', 'points', 'n'].includes(t.dataset.k) ? Number(t.value) : t.value;
+    if (t.tagName === 'SELECT') drawGroups(); clearTimeout(drawSheet.t); drawSheet.t = setTimeout(drawSheet, 250); };
+  $('#phg').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; P.groups.splice(Number(b.dataset.rm), 1); drawGroups(); drawSheet(); };
+  $('#phg-add').onclick = () => { const last = P.groups[P.groups.length - 1]; const f = (Number(last?.to) || 0) + 1;
+    P.groups.push({ name: `Phần ${P.groups.length + 1}`, from: f, to: f + 9, type: last?.type || 'mcq', n: last?.n || 4, points: last?.points || 1, section: last?.section || 'reading' }); drawGroups(); drawSheet(); };
+  $('#pha').onclick = (e) => { const b = e.target.closest('.bub'); if (!b) return; const no = Number(b.dataset.no), k = Number(b.dataset.i);
+    P.ans[no] = P.ans[no] === k ? undefined : k;
+    $$(`#pha .bub[data-no="${no}"]`).forEach((x) => x.classList.toggle('on', P.ans[no] === Number(x.dataset.i))); counts(); };
+  $('#pha').oninput = (e) => { const t = e.target; if (t.dataset.an == null) return; P.ans[Number(t.dataset.an)] = t.value; counts(); };
+  $('#phka').onclick = () => {
+    const txt = $('#phk').value.normalize('NFKC').replace(/(ĐÁP ÁN|Đáp án|解答|正解)\s*[:：]?/g, ' '); let n = 0;
+    for (const m of txt.matchAll(/(?:^|[\s,;、|])(?:Câu\s*)?(\d{1,3})\s*[.:：\-)）=]?\s*([^\s,;、|]+)/gi)) {
+      const no = Number(m[1]), v = m[2].replace(/[.。]$/, ''); const g = P.groups.find((x) => nums(x).includes(no)); if (!g || !v) continue;
+      if (g.type === 'text' || g.type === 'essay') { P.ans[no] = v; n++; continue; }
+      let i = -1; const o = optsOf(g);
+      if (g.type === 'tf') i = /^([○〇◯oOĐđTt]|Đúng|true)$/i.test(v) ? 0 : /^([×✕xXSsFf]|Sai|false)$/i.test(v) ? 1 : -1;
+      else if (/^[A-Fa-f]$/.test(v)) i = 'ABCDEF'.indexOf(v.toUpperCase()); else if (/^[1-6]$/.test(v)) i = Number(v) - 1;
+      if (i >= 0 && i < o.length) { P.ans[no] = i; n++; }
+    }
+    drawSheet(); toast(n ? `Đã điền ${n} đáp án.` : 'Không khớp được câu nào. Kiểm tra số câu và các nhóm câu.', !n);
+  };
+  $('#phf').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (!/\.(pdf|png|jpe?g|webp)$/i.test(f.name)) { toast('Chỉ nhận file PDF hoặc ảnh png, jpg, webp.', true); e.target.value = ''; return; }
+    $('#phmsg').innerHTML = 'Đang tải file lên…';
+    try { const r = await uploadMedia(f); P.doc = r.url; if (!$('#pht').value) $('#pht').value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 150);
+      $('#phmsg').innerHTML = `<span class="ok-text">✓ Đã tải <b>${esc(f.name)}</b>.</span> <a href="${esc(r.url)}" target="_blank" rel="noopener">Xem file</a>`; counts(); }
+    catch (er) { $('#phmsg').innerHTML = `<span class="bad-text">${esc(er.message)}</span>`; }
+  };
+  $('#phgo').onclick = async () => {
+    if (busy) return; busy = true; const b = $('#phgo'); b.disabled = true;
+    try {
+      const answers = {}; for (const [k, v] of Object.entries(P.ans)) if (v !== undefined && v !== '') answers[k] = v;
+      const r = await api('POST', '/admin/import/sheet', { title: $('#pht').value, level: $('#phl').value, minutes: Number($('#phm').value), scale: Number($('#phs').value), publish: $('#php').checked, doc_url: P.doc || '', groups: P.groups, answers });
+      $('#ad').innerHTML = `<h1>Tải đề thi từ file PDF / Word</h1><div class="card"><h2 style="margin-top:0">Đã tạo đề “${esc($('#pht').value)}”</h2><p>Phiếu trả lời có ${r.questions} câu${r.status === 'published' ? ', đề đã được đăng' : r.status === 'pending' ? ', đề đang chờ người duyệt đăng' : ', đề đang ở trạng thái nháp'}.</p>
+        <div class="row"><a class="btn primary" href="#/de/${r.id}">Xem đề như học viên</a><a class="btn" href="#/quan-tri/de/${r.id}">Sửa đề</a>${['teacher', 'admin'].includes(S.user.role) ? '<a class="btn" href="#/quan-tri/lop">Giao cho lớp</a>' : ''}<a class="btn ghost" href="#/quan-tri/tai-de">Tải đề khác</a></div></div>`;
+      scrollTo(0, 0); toast('Đã tạo đề.');
+    } catch (er) { toast(er.message, true); const m = er.data?.missing?.[0]; if (m) { const el = $(`#pha [data-no="${m}"], #pha [data-an="${m}"]`); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }
+    finally { busy = false; const bb = $('#phgo'); if (bb) bb.disabled = false; }
+  };
+}

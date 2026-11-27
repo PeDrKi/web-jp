@@ -71,10 +71,10 @@ async function withAuthors(rows) {
 async function snapshotVersion(q, userId) {
   (await db.prepare('INSERT INTO question_versions(question_id,version,snapshot,changed_by,at) VALUES(?,?,?,?,?) ON CONFLICT(question_id,version) DO UPDATE SET snapshot=excluded.snapshot, changed_by=excluded.changed_by, at=excluded.at').run(q.id, q.version, JSON.stringify(q), userId, now()));
 }
-async function insertQuestion(q, userId, status = 'draft') {
-  const r = (await db.prepare(`INSERT INTO questions(level,section,qtype,stem,passage,audio_script,audio_url,image_url,options,answer,explanation,tags,kind,model_answer,accepted,points,status,created_by,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url,
-    JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, status, userId, now(), now()));
+async function insertQuestion(q, userId, status = 'draft', isSheet = false) {
+  const r = (await db.prepare(`INSERT INTO questions(level,section,qtype,stem,passage,audio_script,audio_url,image_url,options,answer,explanation,tags,kind,model_answer,accepted,points,status,created_by,created_at,updated_at,is_sheet)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url,
+    JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, status, userId, now(), now(), isSheet ? 1 : 0));
   const id = Number(r.lastInsertRowid);
   (await snapshotVersion(C.rowToQuestion((await db.prepare('SELECT * FROM questions WHERE id=?').get(id))), userId));
   return id;
@@ -276,6 +276,174 @@ router.post('/import/questions', A.requireRole(...AUTHORS), express.text({ type:
 // ---------------- Đề thi ----------------
 const examRow = (e) => ({ ...e, sections: j(e.sections, []), scoring: j(e.scoring, {}) });
 router.get('/exams', wrap(async (req, res) => res.json(await withAuthors((await db.prepare(`SELECT * FROM exams ${req.query.mine ? 'WHERE created_by=?' : ''} ORDER BY id DESC`).all(...(req.query.mine ? [req.user.id] : []))).map(examRow)))));
+// ---- Tải đề từ file PDF / Word: tách câu (bản nháp) -> giảng viên duyệt lại -> tạo câu hỏi + đề ----
+const DOC = require('../lib/docimport');
+router.post('/import/document', A.requireRole(...AUTHORS), express.raw({ type: () => true, limit: '20mb' }), wrap(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return bad(res, 'Chưa chọn file.');
+  const name = decodeURIComponent(String(req.headers['x-filename'] || ''));
+  let ex;
+  try { ex = await DOC.extractText(req.body, name); } catch (e) { return bad(res, /chưa hỗ trợ/.test(e.message) ? e.message : 'Không đọc được file. Hãy dùng PDF có chữ (xuất từ Word) hoặc .docx.', 422); }
+  const letters = (ex.text.match(/[\p{L}\p{N}]/gu) || []).length;
+  if (letters < 40) return bad(res, 'File không có chữ để đọc (có thể là ảnh chụp hoặc bản scan). Hãy dùng file PDF xuất từ Word, hoặc file .docx.', 422);
+  const doc = DOC.parseExam(ex.text);
+  if (!doc.count) return bad(res, 'Không tìm thấy câu hỏi nào. Câu hỏi cần được đánh số "1." "2." hoặc "Câu 1:", phương án "A. B. C. D.".', 422);
+  res.json({ ...doc, file: name, type: ex.type, pages: ex.pages || null });
+}));
+// Điền đáp án từ bảng đáp án dán vào ("1.C 2.B …", "41 DBAC", "111 ○")
+router.post('/import/document/key', A.requireRole(...AUTHORS), express.json({ limit: '10mb' }), wrap(async (req, res) => {
+  const doc = req.body?.doc; if (!doc?.sections) return bad(res, 'Thiếu dữ liệu đề.');
+  const n = DOC.applyKey(doc, String(req.body.key || ''));
+  res.json({ doc, applied: n });
+}));
+router.post('/import/document/commit', A.requireRole(...AUTHORS), express.json({ limit: '10mb' }), wrap(async (req, res) => {
+  const b = req.body || {};
+  const level = /^N[1-5]$/.test(b.level) ? b.level : null; if (!level) return bad(res, 'Chọn cấp độ của đề.');
+  const title = String(b.title || '').trim().slice(0, 150); if (!title) return bad(res, 'Nhập tên đề.');
+  const secs = (Array.isArray(b.sections) ? b.sections : []).filter((s) => s && Array.isArray(s.questions) && s.questions.length);
+  if (!secs.length) return bad(res, 'Đề chưa có câu hỏi nào.');
+  const errors = [], built = [];
+  secs.forEach((s, si) => {
+    const short = (String(s.name || '').match(/^(問題\s*\d+|第\s*\d+\s*部|PHẦN\s+\S+|Phần\s+\S+)/i) || [])[1] || '';
+    built.push({ name: String(s.name || `Phần ${si + 1}`).slice(0, 80), qs: s.questions.map((x) => {
+      const kind = x.kind === 'essay' ? 'essay' : 'mcq';
+      const opts = kind === 'mcq' ? (x.options || []).map((o) => String(o ?? '').trim()) : [];
+      const ans = Number.isInteger(x.answer) ? x.answer : -1;
+      const q = cleanQuestion({ kind, level, section: x.section, qtype: x.qtype || short, stem: x.stem, passage: x.passage, options: opts, answer: ans,
+        explanation: String(x.explanation || '').trim() || (kind === 'mcq' && ans >= 0 ? `Đáp án đúng: ${'ABCDEF'[ans]}. ${opts[ans] || ''}` : ''),
+        model_answer: kind === 'essay' ? (String(x.model_answer || '').trim() || (String(x.accepted || '').trim() ? '' : '(Giáo viên chấm theo đáp án riêng.)')) : '',
+        accepted: kind === 'essay' ? x.accepted : '', points: Number(x.points) || 1, tags: {} });
+      const errs = C.validateQuestion(q).map((e) => (e === 'Đáp án đúng không hợp lệ' ? 'Chưa chọn đáp án đúng' : e));
+      if (errs.length) errors.push({ label: String(x.label || ''), section: si, errors: errs });
+      return q;
+    }) });
+  });
+  if (errors.length) return bad(res, `Còn ${errors.length} câu cần sửa trước khi tạo đề.`, 422, { errors });
+  const publish = b.publish !== false;
+  const status = !publish ? 'draft' : req.user.role === 'editor' ? 'pending' : 'published';
+  const ALL_SECS = ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'];
+  const max = Number(b.scale) === 100 ? 100 : 10;
+  const scoring = { groups: [{ key: 'all', name: 'Toàn bài', sections: ALL_SECS, max, min: 0 }], total_pass: max / 2, ...(max === 10 ? { decimals: 1 } : {}), note: `Thang điểm ${max}, quy đổi theo điểm từng câu.` };
+  const out = await tx(async () => {
+    const sections = [];
+    for (const [i, s] of built.entries()) { const ids = []; for (const q of s.qs) ids.push(await insertQuestion(q, req.user.id, status)); sections.push({ key: 's' + (i + 1), name: s.name, question_ids: ids }); }
+    const minutes = Math.min(600, Math.max(5, Number(b.minutes) || 60));
+    const r = await db.prepare('INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(title, 'CUSTOM', level, minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(scoring), status, req.user.id, now(), now());
+    return { id: Number(r.lastInsertRowid), questions: sections.reduce((a, s) => a + s.question_ids.length, 0) };
+  });
+  res.json({ ...out, status });
+}));
+
+// ---- Đề PDF/ảnh scan + phiếu trả lời: học viên xem file đề, tô đáp án trên phiếu; giáo viên nhập đáp án ----
+const SHEET_TYPES = { mcq: 1, tf: 1, text: 1, essay: 1 };
+const examMeta = (b) => {
+  const level = /^N[1-5]$/.test(b.level) ? b.level : null;
+  const title = String(b.title || '').trim().slice(0, 150);
+  const max = Number(b.scale) === 100 ? 100 : 10;
+  const ALL_SECS = ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'];
+  return { level, title, minutes: Math.min(600, Math.max(5, Number(b.minutes) || 60)), publish: b.publish !== false,
+    scoring: { groups: [{ key: 'all', name: 'Toàn bài', sections: ALL_SECS, max, min: 0 }], total_pass: max / 2, ...(max === 10 ? { decimals: 1 } : {}), note: `Thang điểm ${max}, quy đổi theo điểm từng câu.` } };
+};
+router.post('/import/sheet', A.requireRole(...AUTHORS), express.json({ limit: '2mb' }), wrap(async (req, res) => {
+  const b = req.body || {}, M = examMeta(b);
+  if (!M.level) return bad(res, 'Chọn cấp độ của đề.');
+  if (!M.title) return bad(res, 'Nhập tên đề.');
+  const docUrl = String(b.doc_url || '').trim();
+  if (!docUrl || !(await db.prepare("SELECT id FROM media WHERE url=? OR '/uploads/' || path=?").get(docUrl, docUrl))) return bad(res, 'Hãy tải file đề (PDF hoặc ảnh) lên trước.');
+  const groups = Array.isArray(b.groups) ? b.groups.slice(0, 30) : [];
+  if (!groups.length) return bad(res, 'Thêm ít nhất một nhóm câu.');
+  const answers = b.answers && typeof b.answers === 'object' ? b.answers : {};
+  const used = new Set(), built = [], missing = [];
+  for (const [gi, g] of groups.entries()) {
+    const from = Number(g.from), to = Number(g.to), type = SHEET_TYPES[g.type] ? g.type : 'mcq';
+    const name = String(g.name || '').trim().slice(0, 80) || `Nhóm ${gi + 1}`;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to > 999) return bad(res, `${name}: số câu "từ … đến …" không hợp lệ.`);
+    const points = Number(g.points) || 1;
+    if (!Number.isInteger(points) || points < 1 || points > 100) return bad(res, `${name}: điểm mỗi câu phải là số nguyên 1-100.`);
+    const section = C.SECTIONS[g.section] && g.section !== 'listening' ? g.section : 'reading';
+    const n = Math.min(6, Math.max(2, Number(g.n) || 4));
+    const opts = type === 'mcq' ? 'ABCDEF'.slice(0, n).split('') : type === 'tf' ? ['Đúng', 'Sai'] : [];
+    const qs = [];
+    for (let no = from; no <= to; no++) {
+      if (used.has(no)) return bad(res, `Câu ${no} nằm trong hai nhóm. Sửa lại khoảng số câu.`);
+      used.add(no);
+      const v = answers[no] ?? answers[String(no)];
+      let q;
+      if (type === 'mcq' || type === 'tf') {
+        const ans = Number.isInteger(v) && v >= 0 && v < opts.length ? v : -1;
+        if (ans < 0) missing.push(no);
+        q = { kind: 'mcq', options: opts, answer: ans, explanation: ans >= 0 ? `Đáp án đúng: ${opts[ans]}.` : '' };
+      } else {
+        const t = String(v ?? '').trim().slice(0, 2000);
+        if (type === 'text' && !t) missing.push(no);
+        q = { kind: 'essay', options: [], answer: -1, accepted: type === 'text' ? t : '', model_answer: t || '(Giáo viên chấm theo đáp án riêng.)' };
+      }
+      qs.push(cleanQuestion({ ...q, level: M.level, section, qtype: type === 'essay' ? 'Phiếu trả lời · viết' : 'Phiếu trả lời', stem: `Câu ${no}`, points, tags: {} }));
+    }
+    built.push({ name, qs });
+  }
+  if (used.size > 400) return bad(res, 'Phiếu trả lời tối đa 400 câu.');
+  if (missing.length) return bad(res, `Còn ${missing.length} câu chưa có đáp án: ${missing.slice(0, 30).join(', ')}${missing.length > 30 ? '…' : ''}.`, 422, { missing });
+  for (const s of built) for (const q of s.qs) { const errs = C.validateQuestion(q); if (errs.length) return bad(res, `${q.stem}: ${errs.join('; ')}`, 422); }
+  const status = !M.publish ? 'draft' : req.user.role === 'editor' ? 'pending' : 'published';
+  const out = await tx(async () => {
+    const sections = [];
+    for (const [i, s] of built.entries()) { const ids = []; for (const q of s.qs) ids.push(await insertQuestion(q, req.user.id, status, true)); sections.push({ key: 's' + (i + 1), name: s.name, question_ids: ids }); }
+    const r = await db.prepare('INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at,doc_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(M.title, 'CUSTOM', M.level, M.minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(M.scoring), status, req.user.id, now(), now(), docUrl);
+    return { id: Number(r.lastInsertRowid), questions: used.size };
+  });
+  res.json({ ...out, status });
+}));
+// ---- Thay đề mẫu: xóa các đề mô phỏng cài sẵn (và câu hỏi chỉ thuộc các đề đó), nạp đề Chuyên 10 số 01 làm đề mẫu ----
+const SAMPLE_TITLES = () => [...['N5', 'N4', 'N3'].map((lv) => `JLPT ${lv} - Đề mô phỏng rút gọn 01`), ...require('../seed/extra').exams.map((e) => e.title)];
+const NEW_SAMPLE = () => require('../scripts/data/chuyen-10-de-01');
+async function sampleState() {
+  const titles = SAMPLE_TITLES();
+  const ex = await db.prepare('SELECT id,title FROM exams WHERE title = ANY(?) ORDER BY id').all(titles);
+  const has = !!(await db.prepare('SELECT 1 FROM exams WHERE title=?').get(NEW_SAMPLE().title));
+  return { old: ex, new_title: NEW_SAMPLE().title, has_new: has };
+}
+router.get('/sample', A.requireRole('admin'), wrap(async (_req, res) => res.json(await sampleState())));
+router.post('/sample/replace', A.requireRole('admin'), wrap(async (req, res) => {
+  const st = await sampleState(), D = NEW_SAMPLE();
+  // dựng sẵn câu hỏi của đề mới, kiểm tra trước khi xóa gì
+  const qs = st.has_new ? [] : D.rows.map((r) => {
+    const essay = r.kind === 'essay';
+    const options = essay ? [] : [r.option1, r.option2, r.option3, r.option4].filter((o) => String(o ?? '').trim());
+    return cleanQuestion({ kind: essay ? 'essay' : 'mcq', level: r.level || D.level, section: r.section, qtype: r.qtype, stem: r.stem, passage: r.passage, options,
+      answer: essay ? -1 : Number(r.answer) - 1, explanation: r.explanation, model_answer: r.model_answer, accepted: r.accepted, points: Number(r.points) || 1,
+      tags: { grammar: r.grammar || '', kanji: r.kanji || '', situation: r.situation || '' } });
+  });
+  for (const [i, q] of qs.entries()) { const errs = C.validateQuestion(q); if (errs.length) return bad(res, `Đề mẫu mới, câu ${i + 1}: ${errs.join('; ')}`, 500); }
+  const out = await tx(async () => {
+    const delIds = st.old.map((e) => e.id);
+    const old = delIds.length ? await db.prepare('SELECT id,sections FROM exams WHERE id = ANY(?)').all(delIds) : [];
+    const oldQ = new Set(old.flatMap((e) => j(e.sections, []).flatMap((x) => x.question_ids)));
+    const others = (await db.prepare('SELECT id,sections FROM exams').all()).filter((e) => !delIds.includes(Number(e.id)));
+    const used = new Set(others.flatMap((e) => j(e.sections, []).flatMap((x) => x.question_ids)));
+    const dropQ = [...oldQ].filter((id) => !used.has(id));
+    if (delIds.length) await db.prepare('DELETE FROM exams WHERE id = ANY(?)').run(delIds);
+    if (dropQ.length) for (const t of ['question_versions', 'comments', 'reports']) await db.prepare(`DELETE FROM ${t} WHERE question_id = ANY(?)`).run(dropQ);
+    if (dropQ.length) await db.prepare('DELETE FROM questions WHERE id = ANY(?)').run(dropQ);
+    // bỏ các bước "làm đề" trỏ tới đề đã xóa trong khóa học
+    const gone = new Set(st.old.map((e) => e.title));
+    for (const c of await db.prepare('SELECT id,steps FROM courses').all()) {
+      const steps = j(c.steps, []); const kept = steps.filter((x) => !(x.type === 'exam' && gone.has(x.ref)));
+      if (kept.length !== steps.length) await db.prepare('UPDATE courses SET steps=? WHERE id=?').run(JSON.stringify(kept), c.id);
+    }
+    let created = null;
+    if (qs.length) {
+      const ids = []; for (const q of qs) ids.push(await insertQuestion(q, req.user.id, 'published'));
+      const sections = D.parts.map((pt) => ({ key: pt.key, name: pt.name, question_ids: ids.slice(pt.from, pt.to) }));
+      const r = await db.prepare("INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'published',?,?,?)")
+        .run(D.title, D.exam_type || 'CUSTOM', D.level, D.minutes, D.description, JSON.stringify(sections), JSON.stringify(D.scoring), req.user.id, now(), now());
+      created = { id: Number(r.lastInsertRowid), questions: ids.length };
+    }
+    return { deleted_exams: delIds.length, deleted_questions: dropQ.length, created };
+  });
+  res.json(out);
+}));
 function cleanExam(b) {
   const sections = (b.sections || []).map((s) => ({ key: s.key, name: s.name || C.SECTIONS[s.key] || s.key, question_ids: (s.question_ids || []).map(Number).filter(Number.isInteger) }));
   return { title: String(b.title || '').trim(), exam_type: b.exam_type || 'JLPT', level: b.level, duration_min: Number(b.duration_min) || 30, description: String(b.description || ''), sections, scoring: b.scoring || {} };
@@ -583,7 +751,7 @@ router.post('/users/:id/logout-all', A.requireRole('admin'), wrap(async (req, re
 }));
 
 // ---------------- Kho media dùng lại được (AD-09) ----------------
-const MIME = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+const MIME = { pdf: 'application/pdf', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
 const Store = require('../lib/storage');
 const upDir = Store.upDir;
 const mediaUrl = (m) => m.url || '/uploads/' + m.path;
@@ -591,7 +759,7 @@ router.post('/media', A.requireRole(...AUTHORS), express.raw({ type: '*/*', limi
   if (!Buffer.isBuffer(req.body) || !req.body.length) return bad(res, 'Không có dữ liệu file.');
   const name = decodeURIComponent(String(req.headers['x-filename'] || 'file')).replace(/[^\w.\-぀-ヿ一-龯 ]/g, '_').slice(0, 100);
   const ext = (name.split('.').pop() || '').toLowerCase();
-  if (!MIME[ext]) return bad(res, 'Chỉ nhận file mp3, wav, m4a, ogg, png, jpg, webp.', 415);
+  if (!MIME[ext]) return bad(res, 'Chỉ nhận file pdf, mp3, wav, m4a, ogg, png, jpg, webp.', 415);
   const sha = crypto.createHash('sha256').update(req.body).digest('hex');
   let m = (await db.prepare('SELECT * FROM media WHERE sha256=?').get(sha));
   let reused = !!m;
@@ -613,7 +781,7 @@ async function mediaInfo(req, res) {
   const name = String(b.filename || 'file').replace(/[^\w.\-぀-ヿ一-龯 ]/g, '_').slice(0, 100);
   const ext = (name.split('.').pop() || '').toLowerCase();
   const sha = String(b.sha256 || '').toLowerCase(); const size = Number(b.size);
-  if (!MIME[ext]) { bad(res, 'Chỉ nhận file mp3, wav, m4a, ogg, png, jpg, webp.', 415); return null; }
+  if (!MIME[ext]) { bad(res, 'Chỉ nhận file pdf, mp3, wav, m4a, ogg, png, jpg, webp.', 415); return null; }
   if (!/^[0-9a-f]{64}$/.test(sha) || !(size > 0)) { bad(res, 'Thông tin file không hợp lệ.'); return null; }
   if (size > MAX_MEDIA) { bad(res, 'File quá lớn (tối đa 50 MB).', 413); return null; }
   return { name, ext, sha, size, p: `${sha.slice(0, 24)}.${ext}` };

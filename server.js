@@ -16,9 +16,20 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'same-origin');
   next();
 });
+// Kiểm tra sống: dịch vụ ping (UptimeRobot, cron-job.org) gọi mỗi 10 phút để Render free không "ngủ".
+// CSDL chỉ được chạm khi vừa khởi động và sau đó 6 ngày một lần (hoặc gọi ?db=1), đủ để Supabase free
+// không bị tạm dừng vì 7 ngày không hoạt động mà không tạo truy vấn thừa.
+const DB_PING_MS = Number(process.env.DB_PING_DAYS || 6) * 24 * 3600e3;
+let lastDbPing = 0;
+app.get('/api/health', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.query.db !== '1' && Date.now() - lastDbPing < DB_PING_MS) return res.json({ ok: true, db: 'skipped', next_db_ping: lastDbPing + DB_PING_MS, time: Date.now() });
+  try { const { db } = require('./lib/db'); await db.prepare('SELECT 1 AS ok').get(); lastDbPing = Date.now(); res.json({ ok: true, db: true, next_db_ping: lastDbPing + DB_PING_MS, time: Date.now() }); }
+  catch (e) { console.error('health:', e.message); res.status(503).json({ ok: false, db: false }); }
+});
 // JSON cho API học viên; các route nhập file/upload của admin tự xử lý body thô
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/admin/import/questions') || req.path === '/admin/media') return next();
+  if (req.path.startsWith('/admin/import/questions') || req.path.startsWith('/admin/import/document') || req.path === '/admin/media') return next();
   return express.json({ limit: '1mb' })(req, res, (err) => err ? res.status(400).json({ error: 'Dữ liệu gửi lên không hợp lệ.' }) : next());
 });
 app.use('/api', A.authMiddleware);
@@ -29,6 +40,7 @@ app.use('/api', extra);
 app.use('/api', learner);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Không tìm thấy.' }));
 app.use('/uploads', express.static(admin.upDir, { maxAge: '7d', setHeaders: (r) => r.setHeader('Content-Disposition', 'inline') }));
+app.use('/vendor/pdfjs', express.static(path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'build'), { maxAge: '30d' }));   // xem đề PDF trên điện thoại
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ error: 'Lỗi máy chủ.' }); });
 

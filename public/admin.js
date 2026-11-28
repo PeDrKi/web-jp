@@ -64,7 +64,7 @@ route(/^\/quan-tri\/cau-hoi$/, async () => {
   adminShell('cau-hoi', `<div class="row between"><h1 style="margin:0">Ngân hàng câu hỏi (${r.total})</h1>${can.edit() ? '<div class="row"><a class="btn" href="#/quan-tri/nhap">⇪ Tải file đề</a><a class="btn" href="#/quan-tri/cau-hoi/moi?kind=essay">＋ Câu tự luận</a><a class="btn primary" href="#/quan-tri/cau-hoi/moi">＋ Câu trắc nghiệm</a></div>' : ''}</div>
   <div class="card flat mt"><div class="field-row">${sel('a-kind', Object.entries(KINDS), q.kind)}${sel('a-st', Object.entries(STATUS), q.status)}${sel('a-lv', ['N5', 'N4', 'N3', 'N2', 'N1'].map((l) => [l, l]), q.level)}${sel('a-sec', Object.entries(SECTIONS), q.section)}<input id="a-q" type="search" placeholder="Tìm nội dung, thẻ, ID…" value="${esc(q.q || '')}"></div>
     <label class="inline mt"><input type="checkbox" id="a-mine" ${q.mine ? 'checked' : ''}> Chỉ câu do tôi tạo</label></div>
-  <div class="card tw mt"><table><tr><th>ID</th><th>Câu hỏi</th><th>Loại</th><th>Phần</th><th>Thẻ</th><th>Người tạo</th><th>Trạng thái</th><th></th></tr>${r.items.map((x) => `<tr><td>${x.id}<div class="small muted">v${x.version}</div></td><td class="jp">${esc(plain(x.stem).slice(0, 70))}</td><td>${kindChip(x.kind)}${x.points > 1 ? `<div class="small muted">${x.points} điểm</div>` : ''}</td><td>${chipLevel(x.level)} <div class="small">${esc(SECTIONS[x.section])}</div></td><td class="small">${[...(x.tags.grammar || []), ...(x.tags.kanji || [])].map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</td><td class="small">${esc(x.author || '')}</td><td>${stChip(x.status)}</td><td><a class="btn sm" href="#/quan-tri/cau-hoi/${x.id}">Mở</a></td></tr>`).join('') || '<tr><td colspan="8" class="empty">Không có câu hỏi.</td></tr>'}</table></div>
+  <div class="card tw mt"><table><tr><th>ID</th><th>Câu hỏi</th><th>Loại</th><th>Phần</th><th>Thẻ</th><th>Người tạo</th><th>Trạng thái</th><th></th></tr>${r.items.map((x) => `<tr><td>${x.id}<div class="small muted">v${x.version}</div></td><td class="jp">${esc(plain(x.stem).slice(0, 70))}</td><td>${kindChip(x.kind)}${diffChip(x.difficulty)}${x.points > 1 ? `<div class="small muted">${x.points} điểm</div>` : ''}</td><td>${chipLevel(x.level)} <div class="small">${esc(SECTIONS[x.section])}</div></td><td class="small">${[...(x.tags.grammar || []), ...(x.tags.kanji || [])].map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</td><td class="small">${esc(x.author || '')}</td><td>${stChip(x.status)}</td><td><a class="btn sm" href="#/quan-tri/cau-hoi/${x.id}">Mở</a></td></tr>`).join('') || '<tr><td colspan="8" class="empty">Không có câu hỏi.</td></tr>'}</table></div>
   <div class="row mt">${r.page > 1 ? `<a class="btn sm" href="#/quan-tri/cau-hoi?${new URLSearchParams({ ...q, page: r.page - 1 })}">← Trước</a>` : ''}<span class="muted small">Trang ${r.page}/${Math.max(1, Math.ceil(r.total / r.per))}</span>${r.page * r.per < r.total ? `<a class="btn sm" href="#/quan-tri/cau-hoi?${new URLSearchParams({ ...q, page: r.page + 1 })}">Sau →</a>` : ''}</div>`);
   const go = () => { const o = {}; for (const [k, id] of [['kind', 'a-kind'], ['status', 'a-st'], ['level', 'a-lv'], ['section', 'a-sec'], ['q', 'a-q']]) if ($('#' + id).value) o[k] = $('#' + id).value; if ($('#a-mine').checked) o.mine = '1'; nav('/quan-tri/cau-hoi?' + new URLSearchParams(o)); };
   $$('#a-kind,#a-st,#a-lv,#a-sec,#a-mine').forEach((e) => e.onchange = go); $('#a-q').onkeydown = (e) => { if (e.key === 'Enter') go(); };
@@ -86,13 +86,18 @@ async function questionEditor(id) {
     <div class="field-row"><div><label>Cấp độ</label><select name="level">${['N5', 'N4', 'N3', 'N2', 'N1'].map((l) => `<option ${Q.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div><label>Phần thi</label><select name="section">${Object.entries(SECTIONS).map(([k, v]) => `<option value="${k}" ${Q.section === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
       <div><label>Điểm tối đa</label><input name="points" type="number" min="1" max="100" value="${Q.points || 1}"></div>
+      <div><label>Mức độ</label><select name="difficulty">${DIFFS.map((d, i) => `<option value="${i}" ${(Q.difficulty || 0) === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+      <div><label>Danh mục</label><select name="catalog"><option value="">Chưa xếp</option>${Object.entries(EXAM_KINDS).map(([k, t]) => `<option value="${k}" ${Q.catalog === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div><label>Dạng câu</label><input name="qtype" value="${esc(Q.qtype)}" placeholder="VD: Trợ từ" list="qtypes"><datalist id="qtypes">${['Cách đọc Kanji', 'Chọn từ phù hợp', 'Trợ từ', 'Dạng て', 'Hội thoại', 'Đọc hiểu', 'Nghe hội thoại', 'Dịch Việt → Nhật', 'Dịch Nhật → Việt', 'Viết câu', 'Viết đoạn văn', 'Điền từ'].map((t) => `<option>${t}</option>`).join('')}</datalist></div></div>
     <label>Đoạn văn / ngữ cảnh (đọc hiểu, không bắt buộc)</label><textarea name="passage" rows="3">${esc(Q.passage)}</textarea>
     <label>Nội dung câu hỏi</label><textarea name="stem" rows="3" required>${esc(Q.stem)}</textarea>
     <div class="small muted">Furigana: <span class="kbd">{漢字|かんじ}</span> · Gạch chân: <span class="kbd">__chữ__</span></div>
     <div id="blk-mcq"><label>Đáp án (chọn nút tròn ở đáp án đúng)</label>
     ${[0, 1, 2, 3, 4, 5].map((i) => `<div class="row" style="flex-wrap:nowrap;margin-bottom:6px"><input type="radio" name="ans" value="${i}" ${Q.answer === i ? 'checked' : ''} style="width:20px;min-height:0" aria-label="Đáp án ${i + 1} đúng"><input name="o${i}" value="${esc(Q.options[i] || '')}" placeholder="Đáp án ${i + 1}${i >= 4 ? ' (không bắt buộc)' : ''}"></div>`).join('')}</div>
-    <div id="blk-essay"><label>Đáp án mẫu / hướng dẫn chấm (người học chỉ thấy sau khi nộp)</label><textarea name="model_answer" rows="4" class="jp">${esc(Q.model_answer || '')}</textarea>
+    <div id="blk-essay"><div class="field-row"><div><label>Dạng tự luận</label><select name="etype"><option value="">Tự luận chung</option>${Object.entries(ETYPES).map(([k, t]) => `<option value="${k}" ${Q.etype === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div><label>Giới hạn <span id="lim-unit">${lenUnit(Q.etype) === 'words' ? 'từ' : 'chữ'}</span> (0 = không giới hạn)</label><input name="max_len" type="number" min="0" max="5000" value="${Q.max_len || 0}"></div></div>
+      <div class="small muted">Dịch Nhật → Việt đếm theo <b>từ</b>; các dạng viết tiếng Nhật đếm theo <b>chữ</b> (không tính khoảng trắng). Học viên không gõ được quá giới hạn.</div>
+      <label>Đáp án mẫu / hướng dẫn chấm (người học chỉ thấy sau khi nộp)</label><textarea name="model_answer" rows="4" class="jp">${esc(Q.model_answer || '')}</textarea>
       <label>Đáp án ngắn được chấp nhận (mỗi dòng một đáp án, không bắt buộc)</label><textarea name="accepted" rows="2" class="jp" placeholder="わたしはがくせいです&#10;私は学生です">${esc((Q.accepted || []).join('\n'))}</textarea>
       <div class="small muted">Nếu câu trả lời khớp một dòng ở trên (bỏ qua dấu câu, khoảng trắng, katakana/hiragana), hệ thống tự chấm đủ điểm. Không khớp thì giảng viên chấm tay ở mục “Chấm tự luận”.</div></div>
     <label id="lbl-exp">Giải thích tiếng Việt (nêu vì sao các đáp án khác sai)</label><textarea name="explanation" rows="3">${esc(Q.explanation)}</textarea>
@@ -118,7 +123,7 @@ async function questionEditor(id) {
     const fd = new FormData(f);
     const script = String(fd.get('script') || '').split('\n').map((s) => s.trim()).filter(Boolean).map((s) => { const m = s.match(/^([MFmf])\s*[:：]\s*(.*)$/); return m ? { speaker: m[1].toUpperCase(), text: m[2] } : { speaker: 'M', text: s }; });
     const kind = fd.get('kind') || 'mcq';
-    return { kind, points: Number(fd.get('points') || 1), model_answer: fd.get('model_answer'), accepted: String(fd.get('accepted') || '').split('\n').map((x) => x.trim()).filter(Boolean),
+    return { kind, points: Number(fd.get('points') || 1), difficulty: Number(fd.get('difficulty') || 0), catalog: fd.get('catalog') || '', etype: fd.get('etype') || '', max_len: Number(fd.get('max_len') || 0), model_answer: fd.get('model_answer'), accepted: String(fd.get('accepted') || '').split('\n').map((x) => x.trim()).filter(Boolean),
       level: fd.get('level'), section: fd.get('section'), qtype: fd.get('qtype'), passage: fd.get('passage'), stem: fd.get('stem'), options: kind === 'essay' ? [] : [0, 1, 2, 3, 4, 5].map((i) => fd.get('o' + i)).filter((o, i, a) => o || a.slice(i + 1).some(Boolean)), answer: Number(fd.get('ans')), explanation: fd.get('explanation'),
       tags: { grammar: fd.get('grammar'), kanji: fd.get('kanji'), situation: fd.get('situation') }, audio_script: script, audio_url: fd.get('audio_url'), image_url: fd.get('image_url') };
   };
@@ -127,13 +132,13 @@ async function questionEditor(id) {
     $('#pv').innerHTML = `<div class="row mb"><span class="chip">${esc(q.level)}</span><span class="chip">${esc(SECTIONS[q.section])}</span></div>
       ${q.audio_script.length || q.audio_url ? `<div class="audio-box"><button type="button" class="ic" id="pv-play">▶</button><div><b>Bài nghe</b></div></div>` : ''}${q.image_url ? `<img src="${esc(q.image_url)}" alt="" style="max-width:100%">` : ''}
       ${q.passage ? `<div class="passage">${rich(q.passage)}</div>` : ''}<p class="stem">${rich(q.stem)}</p>
-      ${q.kind === 'essay' ? `<textarea rows="4" disabled placeholder="Người học viết câu trả lời ở đây…"></textarea><div class="small muted">${q.points} điểm</div>${q.model_answer ? `<div class="explain"><b>Đáp án mẫu:</b><div class="jp">${rich(q.model_answer)}</div></div>` : ''}`
+      ${q.kind === 'essay' ? `<textarea rows="4" disabled placeholder="${ESSAY_HINT[q.etype] || 'Người học viết câu trả lời ở đây…'}"></textarea><div class="small muted">${esc(ETYPES[q.etype] || 'Tự luận')} · ${q.points} điểm${q.max_len ? ` · tối đa ${q.max_len} ${lenUnit(q.etype) === 'words' ? 'từ' : 'chữ'}` : ''}</div>${q.model_answer ? `<div class="explain"><b>Đáp án mẫu:</b><div class="jp">${rich(q.model_answer)}</div></div>` : ''}`
         : `<div class="opts">${q.options.map((o, i) => `<div class="opt ${i === q.answer ? 'right' : ''}"><span class="n">${i + 1}</span><span>${rich(o)}</span></div>`).join('')}</div>`}${q.explanation ? `<div class="explain">${rich(q.explanation)}</div>` : ''}`;
     const pp = $('#pv-play'); if (pp) pp.onclick = () => q.audio_url ? playUrl(q.audio_url) : speak(q.audio_script);
   };
   const toggleKind = () => { const es = (new FormData(f).get('kind') || 'mcq') === 'essay'; $('#blk-mcq').hidden = es; $('#blk-essay').hidden = !es;
     $('#lbl-exp').textContent = es ? 'Giải thích / ghi chú thêm (không bắt buộc)' : 'Giải thích tiếng Việt (nêu vì sao các đáp án khác sai)'; };
-  f.oninput = preview; f.onchange = (e) => { toggleKind(); preview(); if (e.target.name === 'section' && e.target.value === 'listening') $('#blk-media').open = true; }; toggleKind(); preview();
+  f.oninput = preview; f.onchange = (e) => { toggleKind(); preview(); $('#lim-unit').textContent = lenUnit(f.elements.etype.value) === 'words' ? 'từ' : 'chữ'; if (e.target.name === 'section' && e.target.value === 'listening') $('#blk-media').open = true; }; toggleKind(); preview();
   if (!editable) $$('#qf input, #qf textarea, #qf select').forEach((el) => { el.disabled = true; });
   $('#up').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -221,6 +226,8 @@ async function examEditor(id) {
   adminShell('de', `<a class="small" href="#/quan-tri/de">← Đề thi</a><div class="row between mt"><h1 style="margin:0">${id ? 'Sửa đề' : 'Đề mới'}</h1>${id ? stChip(E.status) : ''}</div>
   <form id="ef" class="card mt"><div class="field-row"><div><label>Tên đề</label><input name="title" required value="${esc(E.title)}"></div><div><label>Kỳ thi</label><select name="exam_type">${[['CUSTOM', 'Đề giảng viên (kiểm tra lớp)'], ['JLPT', 'JLPT'], ['JFT', 'JFT-Basic'], ['NAT', 'NAT-TEST']].map(([k, t]) => `<option value="${k}" ${E.exam_type === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div><label>Cấp độ</label><select name="level">${['N5', 'N4', 'N3', 'N2', 'N1'].map((l) => `<option ${E.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div><div><label>Thời lượng (phút)</label><input name="duration_min" type="number" min="1" value="${E.duration_min}"></div></div>
+    <div class="field-row"><div><label>Danh mục</label><select name="exam_kind">${Object.entries(EXAM_KINDS).map(([k, t]) => `<option value="${k}" ${(E.exam_kind || (T ? 'chuyen' : 'jlpt')) === k ? 'selected' : ''}>${t}${MCQ_ONLY.includes(k) ? ' (chỉ trắc nghiệm)' : ' (có tự luận)'}</option>`).join('')}</select></div>
+      <div><label>Mức độ</label><select name="difficulty">${DIFFS.map((d, i) => `<option value="${i}" ${(E.difficulty || 0) === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div></div>
     <label>Mô tả</label><textarea name="description" rows="2">${esc(E.description)}</textarea>
     <h3 class="mt">Chọn câu hỏi cho từng phần</h3><div class="small muted">Chỉ nên chọn câu cùng cấp độ. Đề chỉ đăng được khi mọi câu đã ở trạng thái “Đã đăng”.</div><div id="pick"></div>
     <div class="row mt"><span class="small muted">Thang điểm nhanh:</span><button type="button" class="sm" data-preset="ten">Thang 10</button><button type="button" class="sm" data-preset="hundred">Thang 100</button><button type="button" class="sm" data-preset="jlpt">Theo JLPT cấp đã chọn</button></div>
@@ -242,8 +249,9 @@ async function examEditor(id) {
   if (!editable) $$('#ef input, #ef textarea, #ef select, #ef [data-preset]').forEach((el) => { el.disabled = true; });
   const body = () => {
     let scoring; try { scoring = JSON.parse(f.elements.scoring.value); } catch { throw new Error('Thang điểm không phải JSON hợp lệ.'); }
-    return { title: f.elements.title.value, exam_type: f.elements.exam_type.value, level: f.elements.level.value, duration_min: Number(f.elements.duration_min.value), description: f.elements.description.value, scoring,
-      sections: Object.keys(SECTIONS).filter((k) => chosen[k]?.size).map((k) => ({ key: k, name: SECTIONS[k], question_ids: [...chosen[k]] })) };
+    return { title: f.elements.title.value, exam_type: f.elements.exam_type.value, exam_kind: f.elements.exam_kind.value, difficulty: Number(f.elements.difficulty.value), level: f.elements.level.value, duration_min: Number(f.elements.duration_min.value), description: f.elements.description.value, scoring,
+      // giữ nguyên các phần riêng của đề tải từ file (第1部, Phần 1…), không chọn lại được ở đây
+      sections: [...E.sections.filter((s) => !SECTIONS[s.key]), ...Object.keys(SECTIONS).filter((k) => chosen[k]?.size).map((k) => ({ key: k, name: SECTIONS[k], question_ids: [...chosen[k]] }))] };
   };
   f.onsubmit = async (e) => { e.preventDefault(); try { const r = await api(id ? 'PUT' : 'POST', id ? `/admin/exams/${id}` : '/admin/exams', body()); toast('Đã lưu đề.'); nav('/quan-tri/de/' + (id || r.id)); if (id) render(); } catch (er) { const b = $('#eerr'); b.hidden = false; b.textContent = er.message; } };
   const st = (s) => async () => { try { if (s === 'published' && T && editable) await api('PUT', `/admin/exams/${id}`, body()); await api('POST', `/admin/exams/${id}/status`, { status: s }); toast('Đã cập nhật.'); render(); } catch (e) { const b = $('#eerr'); b.hidden = false; b.textContent = e.message; } };
@@ -360,7 +368,7 @@ route(/^\/quan-tri\/nguoi-dung$/, async () => {
   const q = S.query.q || ''; const list = await api('GET', '/admin/users?q=' + encodeURIComponent(q));
   adminShell('nguoi-dung', `<div class="row between"><h1>Người dùng (${list.length})</h1><button class="accent" id="new-u">+ Tạo tài khoản</button></div>
   <form class="row mb" id="uf"><input name="q" type="search" placeholder="Tìm email / tên" value="${esc(q)}" style="max-width:320px"><button>Tìm</button></form>
-  <div class="card tw"><table><tr><th>Người dùng</th><th>Vai trò</th><th>Đăng nhập gần nhất</th><th>Thao tác</th></tr>${list.map((u) => `<tr><td>${esc(u.name)}<div class="small muted">${esc(u.email)}${u.google ? ' · Google' : ''}${!u.has_password && !u.google ? ' · <span class="bad-text">chưa đặt mật khẩu</span>' : ''}</div></td>
+  <div class="card tw"><table><tr><th>Người dùng</th><th>Vai trò</th><th>Đăng nhập gần nhất</th><th>Thao tác</th></tr>${list.map((u) => `<tr><td>${esc(u.name)}<div class="small muted">${esc(u.email)}${!u.has_password ? ' · <span class="bad-text">chưa đặt mật khẩu</span>' : ''}</div></td>
     <td><select data-role="${u.id}" ${u.id === S.user.id ? 'disabled' : ''}>${Object.entries(ROLE).map(([k, t]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
     <td class="small">${u.last_login ? fmtDate(u.last_login) : '<span class="muted">chưa</span>'}</td>
     <td><div class="row" style="gap:6px">${u.id === S.user.id ? '<span class="small muted">(bạn)</span>' : `<button class="sm" data-reset="${u.id}" ${u.locked ? 'disabled' : ''}>Link đặt lại mật khẩu</button><button class="sm ghost" data-out="${u.id}">Đăng xuất mọi nơi</button><button class="sm ${u.locked ? 'accent' : 'danger'}" data-lock="${u.id}" data-v="${u.locked ? 0 : 1}">${u.locked ? 'Mở khóa' : 'Khóa'}</button>`}</div></td></tr>`).join('')}</table></div>`);
@@ -646,7 +654,9 @@ route(/^\/quan-tri\/tai-de$/, async () => {
       <textarea data-f="stem" class="jp mt" rows="${rowsOf(q.stem)}">${esc(q.stem)}</textarea>
       ${q.kind === 'mcq' ? `<div class="dopts mt">${q.options.map((o, k) => `<label class="dopt ${q.answer === k ? 'on' : ''}"><input type="radio" name="a-${id}" value="${k}" ${q.answer === k ? 'checked' : ''}><b>${L[k]}</b><input data-opt="${k}" class="jp" value="${esc(o)}"></label>`).join('')}</div>
         <div class="row mt small" style="gap:6px">${q.options.length < 6 ? '<button class="sm ghost" data-addopt>+ phương án</button>' : ''}${q.options.length > 2 ? '<button class="sm ghost" data-rmopt>− bớt phương án</button>' : ''}<span class="muted">Bấm vào nút tròn để chọn đáp án đúng.</span></div>`
-      : `<div class="grid g2 mt"><div><label class="small">Đáp án tự chấm (nếu khớp thì tự cho điểm, cách nhau dấu |)</label><input data-f="accepted" class="jp" value="${esc(q.accepted || '')}" placeholder="VD: DBAC  hoặc  つづけて"></div>
+      : `<div class="row mt" style="gap:8px"><select data-f="etype" class="sm-sel"><option value="">Tự luận chung</option>${Object.entries(ETYPES).map(([k, t]) => `<option value="${k}" ${q.etype === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <label class="inline small">Giới hạn ${lenUnit(q.etype) === 'words' ? 'từ' : 'chữ'} <input data-f="max_len" type="number" min="0" max="5000" value="${q.max_len || 0}" style="width:80px"></label></div>
+        <div class="grid g2 mt"><div><label class="small">Đáp án tự chấm (nếu khớp thì tự cho điểm, cách nhau dấu |)</label><input data-f="accepted" class="jp" value="${esc(q.accepted || '')}" placeholder="VD: DBAC  hoặc  つづけて"></div>
         <div><label class="small">Đáp án mẫu / hướng dẫn chấm (giáo viên xem khi chấm)</label><textarea data-f="model_answer" class="jp" rows="2">${esc(q.model_answer || '')}</textarea></div></div>`}
     </div>`;
   };
@@ -662,12 +672,14 @@ route(/^\/quan-tri\/tai-de$/, async () => {
           <div><label for="dl">Cấp độ</label><select id="dl">${LV.map((l) => `<option ${(D.level || 'N3') === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
           <div><label for="dm">Thời gian (phút)</label><input id="dm" type="number" min="5" max="600" value="${D.minutes || 60}"></div>
           <div><label for="ds">Thang điểm</label><select id="ds"><option value="10">Thang 10</option><option value="100">Thang 100</option></select></div></div>
+        <div class="field-row"><div><label for="dkind">Danh mục</label><select id="dkind">${Object.entries(EXAM_KINDS).map(([k, t]) => `<option value="${k}" ${(nE ? 'chuyen' : 'jlpt') === k ? 'selected' : ''}>${t}${MCQ_ONLY.includes(k) ? ' (chỉ trắc nghiệm)' : ''}</option>`).join('')}</select></div>
+          <div><label for="ddiff">Mức độ</label><select id="ddiff">${DIFFS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select></div></div>
         <label class="inline mt"><input type="checkbox" id="dp" checked> Đăng ngay (bỏ chọn để lưu nháp, sửa thêm rồi đăng sau)</label></div>
       <div class="card mt"><b>Dán bảng đáp án</b> <span class="small muted">(không bắt buộc)</span>
         <p class="small muted">Ghi theo số câu trên đề, ví dụ: <code>1.C 2.B 3.A</code> · câu sắp xếp <code>41.DBAC</code> · đúng/sai <code>111.○ 112.×</code> · đọc kanji <code>96.つづけて</code>. Mỗi câu cách nhau dấu cách hoặc xuống dòng.</p>
         <textarea id="dk" rows="3" class="jp" placeholder="1.C 2.B 3.B 4.A …"></textarea><button class="mt" id="dka">Điền đáp án</button></div>
       ${nE ? `<div class="alert info mt">Có ${nE} câu tự luận. Câu có <b>đáp án tự chấm</b> (sắp xếp, đọc kanji…) được chấm ngay khi học viên nộp; câu còn lại giáo viên chấm ở <b>Chấm tự luận</b>.</div>` : ''}
-      <div id="dqs">${D.sections.map((s, si) => `<div class="dsec" data-si="${si}"><div class="row between mt2"><input data-secname="${si}" value="${esc(s.name)}" style="font-weight:700;flex:1"><span class="small muted" style="margin-left:8px">${s.questions.length} câu</span></div>
+      <div id="dqs">${D.sections.map((s, si) => `<div class="dsec" data-si="${si}"><div class="row between mt2"><input data-secname="${si}" value="${esc(s.name)}" style="font-weight:700;flex:1"><span class="small muted" style="margin-left:8px">${s.questions.length} câu</span>${s.questions.some((q) => q.kind === 'essay') ? `<label class="inline small" style="margin-left:8px">Giới hạn cả nhóm <input data-seclim="${si}" type="number" min="0" max="5000" placeholder="0" style="width:80px"></label>` : ''}</div>
         ${s.questions.map((q, qi) => card(q, si, qi)).join('')}</div>`).join('')}</div>
       <div class="savebar row between"><span id="dcount" class="small"></span><button class="primary" id="dgo"></button></div>`;
     counts(); wire();
@@ -680,11 +692,15 @@ route(/^\/quan-tri\/tai-de$/, async () => {
       if (t.dataset.secname != null) { D.sections[t.dataset.secname].name = t.value; return; }
       const x = at(t); if (!x) return;
       if (t.dataset.opt != null) x.q.options[+t.dataset.opt] = t.value;
-      else if (t.dataset.f && t.tagName !== 'SELECT') x.q[t.dataset.f] = t.dataset.f === 'points' ? Number(t.value) : t.value; };
+      else if (t.dataset.f && t.tagName !== 'SELECT') x.q[t.dataset.f] = ['points', 'max_len'].includes(t.dataset.f) ? Number(t.value) : t.value; };
     box.onchange = (e) => { const t = e.target, x = at(t); if (!x) return;
       if (t.type === 'radio') { x.q.answer = Number(t.value); redrawCard(x); return; }
       if (t.dataset.f === 'kind') { x.q.kind = t.value; if (t.value === 'mcq' && x.q.options.length < 2) { x.q.options = ['', '', '', '']; x.q.answer = -1; } redrawCard(x); return; }
-      if (t.dataset.f === 'section') x.q.section = t.value; };
+      if (t.dataset.f === 'section') x.q.section = t.value;
+      if (t.dataset.f === 'etype') { x.q.etype = t.value; redrawCard(x); } };
+    box.addEventListener('change', (e) => { const t = e.target; if (t.dataset.seclim == null) return;
+      const v = Number(t.value) || 0; for (const q of D.sections[t.dataset.seclim].questions) if (q.kind === 'essay') q.max_len = v;
+      t.closest('.dsec').querySelectorAll('[data-f="max_len"]').forEach((i) => { i.value = v; }); });
     box.onclick = (e) => { const t = e.target.closest('button'); if (!t) return; const x = at(t); if (!x) return;
       if (t.hasAttribute('data-del')) { D.sections[x.si].questions.splice(x.qi, 1); draw(); }
       else if (t.hasAttribute('data-addopt')) { x.q.options.push(''); redrawCard(x); }
@@ -698,7 +714,7 @@ route(/^\/quan-tri\/tai-de$/, async () => {
     if (m && !(await confirmBox(`Còn ${m} câu trắc nghiệm chưa chọn đáp án. Hệ thống sẽ báo những câu đó để bạn sửa. Tiếp tục kiểm tra?`))) return;
     busy = true; const b = $('#dgo'); b.disabled = true; $$('.dq .qerr').forEach((x) => { x.innerHTML = ''; });
     try {
-      const r = await api('POST', '/admin/import/document/commit', { title: $('#dt').value, level: $('#dl').value, minutes: Number($('#dm').value), scale: Number($('#ds').value), publish: $('#dp').checked, sections: D.sections });
+      const r = await api('POST', '/admin/import/document/commit', { title: $('#dt').value, level: $('#dl').value, minutes: Number($('#dm').value), scale: Number($('#ds').value), publish: $('#dp').checked, exam_kind: $('#dkind').value, difficulty: Number($('#ddiff').value), sections: D.sections });
       $('#dv').innerHTML = `<div class="card mt"><h2 style="margin-top:0">Đã tạo đề “${esc($('#dt')?.value || D.title)}”</h2><p>${r.questions} câu đã vào ngân hàng câu hỏi${r.status === 'published' ? ' và đề đã được đăng' : r.status === 'pending' ? ', đề đang chờ người duyệt đăng' : ', đề đang ở trạng thái nháp'}.</p>
         <div class="row"><a class="btn primary" href="#/de/${r.id}">Xem đề như học viên</a><a class="btn" href="#/quan-tri/de/${r.id}">Sửa đề</a>${['teacher', 'admin'].includes(S.user.role) ? '<a class="btn" href="#/quan-tri/lop">Giao cho lớp</a>' : ''}<a class="btn ghost" href="#/quan-tri/tai-de">Tải đề khác</a></div></div>`;
       scrollTo(0, 0); toast('Đã tạo đề.');
@@ -739,8 +755,10 @@ function sheetBuilder() {
     <div class="card mt"><h3 style="margin-top:0">2. Thông tin đề</h3>
       <div class="field-row"><div style="flex:2"><label for="st">Tên đề</label><input id="pht" maxlength="150" placeholder="VD: Đề thi thử N3 tháng 11"></div>
         <div><label for="sl">Cấp độ</label><select id="phl">${LV.map((l) => `<option ${l === 'N3' ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-        <div><label for="sm">Thời gian (phút)</label><input id="phm" type="number" min="5" max="600" value="60"></div>
-        <div><label for="ss">Thang điểm</label><select id="phs"><option value="10">Thang 10</option><option value="100">Thang 100</option></select></div></div>
+        <div><label for="phm">Thời gian (phút)</label><input id="phm" type="number" min="5" max="600" value="60"></div>
+        <div><label for="phs">Thang điểm</label><select id="phs"><option value="10">Thang 10</option><option value="100">Thang 100</option></select></div></div>
+      <div class="field-row"><div><label for="phkind">Danh mục</label><select id="phkind"><option value="">Tự chọn theo nhóm câu</option>${Object.entries(EXAM_KINDS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+        <div><label for="phdiff">Mức độ</label><select id="phdiff">${DIFFS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select></div></div>
       <label class="inline mt"><input type="checkbox" id="php" checked> Đăng ngay (bỏ chọn để lưu nháp)</label></div>
     <div class="card mt"><h3 style="margin-top:0">3. Các nhóm câu trên phiếu</h3><p class="small muted">Ghi số câu theo đúng đề. Ví dụ đề có câu 1-40 trắc nghiệm A-D, câu 41-45 điền từ, câu 46 viết đoạn văn thì tạo 3 nhóm.</p>
       <div id="phg"></div><button class="sm mt" id="phg-add">＋ Thêm nhóm</button></div>
@@ -759,6 +777,8 @@ function sheetBuilder() {
       <div ${g.type === 'mcq' ? '' : 'hidden'}><label class="small">Số phương án</label><select data-k="n">${[2, 3, 4, 5, 6].map((n) => `<option value="${n}" ${Number(g.n) === n ? 'selected' : ''}>A–${'ABCDEF'[n - 1]}</option>`).join('')}</select></div>
       <div><label class="small">Điểm/câu</label><input data-k="points" type="number" min="1" max="100" value="${esc(g.points)}"></div>
       <div><label class="small">Phần thi</label><select data-k="section">${SECS.map(([k, t]) => `<option value="${k}" ${g.section === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
+      <div style="flex:1 1 170px" ${g.type === 'essay' ? '' : 'hidden'}><label class="small">Dạng tự luận</label><select data-k="etype"><option value="">Tự luận chung</option>${Object.entries(ETYPES).filter(([k]) => k !== 'short').map(([k, t]) => `<option value="${k}" ${g.etype === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div ${g.type === 'text' || g.type === 'essay' ? '' : 'hidden'}><label class="small">Giới hạn ${lenUnit(g.type === 'essay' ? g.etype : 'short') === 'words' ? 'từ' : 'chữ'}</label><input data-k="max_len" type="number" min="0" max="5000" value="${esc(g.max_len || 0)}"></div>
       <div class="sgx">${P.groups.length > 1 ? `<button class="sm ghost" data-rm="${i}" title="Xóa nhóm">✕</button>` : ''}</div></div>`).join('');
   };
   const drawSheet = () => {
@@ -776,7 +796,7 @@ function sheetBuilder() {
   };
   drawGroups(); drawSheet();
   $('#phg').oninput = (e) => { const t = e.target, el = t.closest('[data-g]'); if (!el || !t.dataset.k) return; const g = P.groups[el.dataset.g];
-    g[t.dataset.k] = ['from', 'to', 'points', 'n'].includes(t.dataset.k) ? Number(t.value) : t.value;
+    g[t.dataset.k] = ['from', 'to', 'points', 'n', 'max_len'].includes(t.dataset.k) ? Number(t.value) : t.value;
     if (t.tagName === 'SELECT') drawGroups(); clearTimeout(drawSheet.t); drawSheet.t = setTimeout(drawSheet, 250); };
   $('#phg').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; P.groups.splice(Number(b.dataset.rm), 1); drawGroups(); drawSheet(); };
   $('#phg-add').onclick = () => { const last = P.groups[P.groups.length - 1]; const f = (Number(last?.to) || 0) + 1;
@@ -809,7 +829,7 @@ function sheetBuilder() {
     if (busy) return; busy = true; const b = $('#phgo'); b.disabled = true;
     try {
       const answers = {}; for (const [k, v] of Object.entries(P.ans)) if (v !== undefined && v !== '') answers[k] = v;
-      const r = await api('POST', '/admin/import/sheet', { title: $('#pht').value, level: $('#phl').value, minutes: Number($('#phm').value), scale: Number($('#phs').value), publish: $('#php').checked, doc_url: P.doc || '', groups: P.groups, answers });
+      const r = await api('POST', '/admin/import/sheet', { title: $('#pht').value, level: $('#phl').value, minutes: Number($('#phm').value), scale: Number($('#phs').value), publish: $('#php').checked, exam_kind: $('#phkind').value, difficulty: Number($('#phdiff').value), doc_url: P.doc || '', groups: P.groups, answers });
       $('#ad').innerHTML = `<h1>Tải đề thi từ file PDF / Word</h1><div class="card"><h2 style="margin-top:0">Đã tạo đề “${esc($('#pht').value)}”</h2><p>Phiếu trả lời có ${r.questions} câu${r.status === 'published' ? ', đề đã được đăng' : r.status === 'pending' ? ', đề đang chờ người duyệt đăng' : ', đề đang ở trạng thái nháp'}.</p>
         <div class="row"><a class="btn primary" href="#/de/${r.id}">Xem đề như học viên</a><a class="btn" href="#/quan-tri/de/${r.id}">Sửa đề</a>${['teacher', 'admin'].includes(S.user.role) ? '<a class="btn" href="#/quan-tri/lop">Giao cho lớp</a>' : ''}<a class="btn ghost" href="#/quan-tri/tai-de">Tải đề khác</a></div></div>`;
       scrollTo(0, 0); toast('Đã tạo đề.');

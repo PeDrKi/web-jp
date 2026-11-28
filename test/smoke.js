@@ -6,14 +6,13 @@ process.env.DATA_DIR = tmp; process.env.UPLOAD_DIR = path.join(tmp, 'up');
 // Kiểm thử XÓA SẠCH dữ liệu: chỉ chạy trên Postgres riêng cho kiểm thử (TEST_DATABASE_URL), mặc định dùng PGlite trong thư mục tạm
 if (process.env.TEST_DATABASE_URL) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL; else delete process.env.DATABASE_URL;
 delete process.env.SUPABASE_URL;   // kiểm thử lưu file trên ổ đĩa tạm
-// Giả lập Google và Brevo (không gọi mạng thật)
-process.env.GOOGLE_CLIENT_ID = 'test-client'; process.env.BREVO_API_KEY = 'test'; process.env.MAIL_FROM = 'no-reply@test.vn';
-const mails = []; let googleInfo = null;
+// Giả lập Brevo (không gọi mạng thật)
+process.env.BREVO_API_KEY = 'test'; process.env.MAIL_FROM = 'no-reply@test.vn';
+const mails = [];
 const realFetch = global.fetch;
 global.fetch = async (url, o = {}) => {
   const u = String(url);
   if (u.startsWith('https://api.brevo.com/')) { mails.push(JSON.parse(o.body)); return new Response('{"messageId":"x"}', { status: 201 }); }
-  if (u.startsWith('https://oauth2.googleapis.com/tokeninfo')) return googleInfo ? new Response(JSON.stringify(googleInfo), { status: 200 }) : new Response('{}', { status: 400 });
   return realFetch(url, o);
 };
 execFileSync('node', [path.join(__dirname, '..', 'seed', 'seed.js'), '--reset'], { env: process.env, stdio: 'pipe' });
@@ -321,7 +320,7 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('a2', 'GET', '/me'); ok(r.d === null, 'mọi phiên đều hết hiệu lực');
   r = await call('a3', 'GET', '/me', undefined, { cookie: 'sid=1.0.99999999999999.xxx' }); ok(r.d === null, 'cookie giả mạo không đăng nhập được');
 
-  r = await call('anon', 'GET', '/auth/config'); ok(r.d.email_reset === true && r.d.google_client_id === 'test-client', 'cấu hình đăng nhập công khai');
+  r = await call('anon', 'GET', '/auth/config'); ok(r.d.email_reset === true && !('google_client_id' in r.d), 'cấu hình đăng nhập công khai (không còn Google)');
   r = await call('anon', 'POST', '/auth/forgot', { email: 'khongco@x.vn' }); ok(r.s === 200 && mails.length === 0, 'quên mật khẩu với email lạ: trả lời như thường, không gửi thư');
   r = await call('anon', 'POST', '/auth/forgot', { email: 'm@n.vn' }); ok(r.s === 200 && mails.length === 1 && mails[0].to[0].email === 'm@n.vn', 'gửi email đặt lại mật khẩu');
   const tok = (mails[0].htmlContent.match(/dat-lai-mat-khau\?t=([\w-]+)/) || [])[1];
@@ -345,17 +344,7 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('adm', 'POST', `/admin/users/${uid9}/reset-link`); ok(r.s === 200 && r.d.hours === 24, 'quản trị viên cấp link đặt lại mật khẩu');
   r = await call('adm', 'GET', '/admin/users?q=hv9'); ok(r.d[0].last_login > 0 && r.d[0].has_password === true, 'danh sách người dùng có lần đăng nhập gần nhất');
 
-  googleInfo = { aud: 'test-client', iss: 'https://accounts.google.com', exp: String(Math.floor(Date.now() / 1000) + 600), sub: 'g-123', email: 'Google.User@gmail.com', email_verified: 'true', name: 'Google User' };
-  r = await call('g1', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && r.d.is_new && r.d.email === 'google.user@gmail.com' && r.d.google && !r.d.has_password, 'đăng nhập Google lần đầu tạo tài khoản');
-  r = await call('g1', 'POST', '/auth/login', { email: 'google.user@gmail.com', password: 'gibberish1' }); ok(r.s === 401 && /Google/.test(r.d.error), 'tài khoản Google đăng nhập bằng mật khẩu được nhắc dùng Google');
-  r = await call('g1', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && !r.d.is_new, 'đăng nhập Google lần sau dùng lại tài khoản');
-  r = await call('g1', 'POST', '/me/password', { password: 'matkhau456' }); ok(r.s === 200 && r.d.has_password, 'tài khoản Google đặt thêm mật khẩu');
-  googleInfo = { ...googleInfo, sub: 'g-456', email: 'm@n.vn', name: 'Minh G' };
-  r = await call('g2', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 200 && !r.d.is_new && r.d.name === 'Minh', 'Google cùng email liên kết vào tài khoản sẵn có');
-  googleInfo = { ...googleInfo, aud: 'ung-dung-khac' };
-  r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'token Google của ứng dụng khác bị từ chối');
-  googleInfo = { ...googleInfo, aud: 'test-client', email_verified: 'false' };
-  r = await call('g3', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 401, 'email Google chưa xác minh bị từ chối');
+  r = await call('g1', 'POST', '/auth/google', { credential: 'tok' }); ok(r.s === 404, 'đã bỏ đăng nhập Google');
 
   r = await call('khach', 'GET', '/health'); ok(r.s === 200 && r.d.ok === true && r.d.db === true, 'kiểm tra sống: lần đầu sau khởi động có truy vấn CSDL');
   r = await call('khach', 'GET', '/health'); ok(r.s === 200 && r.d.ok === true && r.d.db === 'skipped' && r.d.next_db_ping - Date.now() > 5 * 864e5, 'các lần sau không chạm CSDL, 6 ngày mới chạm lại');
@@ -428,11 +417,34 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('hv', 'POST', '/attempts', { exam_id: shEx.id, mode: 'real' }); const shA = r.d;
   ok(shA.doc_url === pdfU && shA.questions.length === 7 && shA.questions[0].options.join('') === 'ABCD' && shA.questions[0].stem === 'Câu 1' && shA.sections.length === 4, 'bài làm có file đề, phương án giữ nguyên A-B-C-D');
   const qn = (n) => shA.questions[n - 1].id;
+  r = await call('gv', 'GET', `/admin/questions/${qn(1)}`); ok(r.d.catalog === 'chuyen', 'câu của phiếu trả lời được gắn danh mục của đề');
   await call('hv', 'PUT', `/attempts/${shA.id}/answers`, { answers: { [qn(1)]: { c: 2 }, [qn(2)]: { c: 1 }, [qn(3)]: { c: 3 }, [qn(4)]: { c: 0 }, [qn(6)]: { t: 'タベマス' }, [qn(7)]: { t: '私の町は…' } } });
   await call('hv', 'POST', `/attempts/${shA.id}/submit`);
   r = await call('hv', 'GET', `/attempts/${shA.id}`); const it = r.d.result.items;
   ok(it[0].ok && !it[1].ok && it[2].ok && it[3].ok && !it[4].ok && it[5].ok && r.d.result.pending_grading === 1, 'chấm phiếu trả lời (trắc nghiệm, đúng/sai, điền ngắn tự chấm, tự luận chờ chấm)');
   r = await call('hv', 'GET', '/practice/options'); ok(!r.d.some((o) => o.qtype.startsWith('Phiếu trả lời')), 'câu phiếu trả lời không lẫn vào luyện tập');
+
+  console.log('Loại đề, mức khó, giới hạn chữ');
+  const sc10 = { groups: [{ key: 'all', name: 'Toàn bài', sections: ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'], max: 10, min: 0 }], total_pass: 5, decimals: 1 };
+  r = await call('gv', 'POST', '/admin/questions', { kind: 'essay', level: 'N4', section: 'writing', qtype: 'Dịch', stem: '日本語をベトナム語に訳しなさい。', model_answer: 'Tôi là sinh viên.', etype: 'ja_vi', max_len: 5, difficulty: 3, catalog: 'chuyen' });
+  const lq = r.d.id; await call('gv', 'POST', `/admin/questions/${lq}/status`, { status: 'published' });
+  r = await call('gv', 'GET', `/admin/questions/${lq}`); ok(r.d.etype === 'ja_vi' && r.d.max_len === 5 && r.d.difficulty === 3 && r.d.catalog === 'chuyen', 'câu tự luận lưu dạng (dịch Nhật → Việt), giới hạn và mức khó');
+  r = await call('gv', 'POST', '/admin/questions', { kind: 'essay', level: 'N4', section: 'writing', stem: 'x', model_answer: 'y', difficulty: 7 }); ok(r.s === 422, 'mức khó ngoài 1-5 bị từ chối');
+  const exB = { title: 'Đề dịch N4', exam_type: 'CUSTOM', level: 'N4', duration_min: 20, scoring: sc10, difficulty: 3, sections: [{ key: 'writing', question_ids: [lq] }] };
+  for (const k of ['jlpt', 'bjt']) { r = await call('gv', 'POST', '/admin/exams', { ...exB, exam_kind: k }); ok(r.s === 422 && /JLPT và BJT/.test(r.d.error), `đề ${k} không nhận câu tự luận`); }
+  r = await call('gv', 'POST', '/admin/exams', { ...exB, title: 'Đề EJU', exam_kind: 'eju' }); ok(r.s === 200 && r.d.id, 'đề EJU nhận câu tự luận');
+  r = await call('gv', 'POST', '/admin/exams', exB); const lex = r.d.id; await call('gv', 'POST', `/admin/exams/${lex}/status`, { status: 'published' });
+  r = await call('hv', 'GET', '/exams?exam_kind=chuyen&difficulty=3'); ok(r.d.length >= 1 && r.d.every((e) => e.exam_kind === 'chuyen' && e.difficulty === 3) && r.d.some((e) => e.id === lex), 'không chọn loại thì đề có tự luận thành đề chuyên; lọc theo loại + mức khó');
+  r = await call('hv', 'GET', '/exams?exam_kind=jlpt'); ok(r.d.length > 0 && r.d.every((e) => e.exam_kind === 'jlpt'), 'lọc đề JLPT');
+  r = await call('hv', 'POST', '/attempts', { exam_id: lex, mode: 'practice' }); const la = r.d;
+  ok(la.questions[0].etype === 'ja_vi' && la.questions[0].max_len === 5, 'học viên nhận dạng câu và giới hạn chữ');
+  await call('hv', 'PUT', `/attempts/${la.id}/answers`, { answers: { [lq]: { t: 'Tôi là một sinh viên năm nhất' } } });
+  r = await call('hv', 'GET', `/attempts/${la.id}`); ok(r.d.answers[lq].t === 'Tôi là một sinh viên', 'bài dịch bị cắt về đúng 5 từ');
+  r = await call('hv', 'POST', '/attempts', { practice: { difficulty: 3 } }); ok(r.s === 200 && r.d.questions.every((q) => q.id === lq), 'luyện tập theo mức khó');
+  r = await call('hv', 'POST', '/attempts', { practice: { difficulty: 3, catalog: 'chuyen' } }); ok(r.s === 200 && r.d.questions.some((q) => q.id === lq), 'luyện tập theo danh mục');
+  r = await call('hv', 'POST', '/attempts', { practice: { difficulty: 3, catalog: 'bjt' } }); ok(r.s === 404, 'danh mục không có câu thì báo trống');
+  r = await call('gv', 'POST', '/admin/import/questions', 'Loại,Cấp độ,Phần thi,Câu hỏi,Đáp án mẫu,Mức độ,Dạng tự luận,Giới hạn chữ\ntự luận,N3,writing,作文を書きなさい。,Gợi ý,Rất khó,Viết văn,400\n', { 'content-type': 'text/csv' });
+  r = await call('gv', 'GET', `/admin/questions/${r.d.ids?.[0]}`); ok(r.d.etype === 'composition' && r.d.difficulty === 5 && r.d.max_len === 400, 'nhập Excel/CSV với cột mức độ, dạng tự luận, giới hạn chữ');
 
   console.log('Thay đề mẫu');
   r = await call('gv', 'GET', '/admin/sample'); ok(r.s === 403, 'chỉ quản trị viên được thay đề mẫu');
@@ -444,6 +456,9 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
   r = await call('adm', 'GET', '/admin/questions'); ok(r.d.total === nBefore - rep.deleted_questions + 153, 'câu hỏi của đề cài sẵn bị xóa theo');
   r = await call('adm', 'GET', '/admin/courses'); ok(!r.d.some((c) => c.steps.some((s) => s.type === 'exam' && /Đề mô phỏng rút gọn/.test(s.ref))), 'khóa học bỏ bước làm đề đã xóa');
   r = await call('hv', 'POST', '/attempts', { exam_id: rep.created.id, mode: 'practice' }); ok(r.s === 200 && r.d.questions.length === 153, 'học viên làm được đề mẫu mới');
+  ok(r.d.questions.some((q) => q.etype === 'composition' && q.max_len === 500) && r.d.questions.some((q) => q.etype === 'ja_vi'), 'đề mẫu có dạng dịch, viết văn và giới hạn chữ');
+  r = await call('adm', 'GET', `/admin/questions/${r.d.questions[0].id}`); ok(r.d.catalog === 'chuyen', 'câu đề mẫu thuộc danh mục Thi chuyên');
+  r = await call('hv', 'GET', '/exams'); ok(r.d.find((e) => e.id === rep.created.id)?.exam_kind === 'chuyen', 'đề mẫu là đề thi chuyên');
   r = await call('adm', 'POST', '/admin/sample/replace'); ok(r.d.deleted_exams === 0 && r.d.created === null, 'bấm lại không làm gì thêm');
 
   console.log('Quyền riêng tư');

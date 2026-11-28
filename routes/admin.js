@@ -54,7 +54,9 @@ function cleanQuestion(b) {
   const kind = b.kind === 'essay' ? 'essay' : 'mcq';
   const accepted = (Array.isArray(b.accepted) ? b.accepted : String(b.accepted || '').split(/[|\n]/)).map((x) => String(x).trim()).filter(Boolean).slice(0, 20);
   const points = b.points === undefined || b.points === '' || b.points === null ? 1 : Number(b.points);
+  const lim = Number(b.max_len) || 0;
   return { kind, model_answer: kind === 'essay' ? String(b.model_answer || '').trim() : '', accepted: kind === 'essay' ? accepted : [], points,
+    difficulty: Number(b.difficulty) || 0, catalog: C.EXAM_KINDS[b.catalog] ? b.catalog : '', etype: kind === 'essay' && C.ETYPES[b.etype] ? b.etype : '', max_len: kind === 'essay' ? lim : 0,
     level: b.level, section: b.section, qtype: String(b.qtype || '').trim(), stem: String(b.stem || '').trim(), passage: String(b.passage || '').trim(),
     audio_script: Array.isArray(b.audio_script) ? b.audio_script.filter((l) => l && l.text).map((l) => ({ speaker: l.speaker === 'F' ? 'F' : 'M', text: String(l.text) })) : [],
     audio_url: String(b.audio_url || ''), image_url: String(b.image_url || ''),
@@ -72,9 +74,9 @@ async function snapshotVersion(q, userId) {
   (await db.prepare('INSERT INTO question_versions(question_id,version,snapshot,changed_by,at) VALUES(?,?,?,?,?) ON CONFLICT(question_id,version) DO UPDATE SET snapshot=excluded.snapshot, changed_by=excluded.changed_by, at=excluded.at').run(q.id, q.version, JSON.stringify(q), userId, now()));
 }
 async function insertQuestion(q, userId, status = 'draft', isSheet = false) {
-  const r = (await db.prepare(`INSERT INTO questions(level,section,qtype,stem,passage,audio_script,audio_url,image_url,options,answer,explanation,tags,kind,model_answer,accepted,points,status,created_by,created_at,updated_at,is_sheet)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url,
-    JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, status, userId, now(), now(), isSheet ? 1 : 0));
+  const r = (await db.prepare(`INSERT INTO questions(level,section,qtype,stem,passage,audio_script,audio_url,image_url,options,answer,explanation,tags,kind,model_answer,accepted,points,status,created_by,created_at,updated_at,is_sheet,difficulty,etype,max_len,catalog)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url,
+    JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, status, userId, now(), now(), isSheet ? 1 : 0, q.difficulty || 0, q.etype || '', q.max_len || 0, q.catalog || ''));
   const id = Number(r.lastInsertRowid);
   (await snapshotVersion(C.rowToQuestion((await db.prepare('SELECT * FROM questions WHERE id=?').get(id))), userId));
   return id;
@@ -149,8 +151,8 @@ router.put('/questions/:id', A.requireRole(...AUTHORS), wrap(async (req, res) =>
   let status = old.status;
   if (old.status === 'published' && req.user.role === 'editor') status = 'pending';
   const version = old.version + 1;
-  (await db.prepare(`UPDATE questions SET level=?,section=?,qtype=?,stem=?,passage=?,audio_script=?,audio_url=?,image_url=?,options=?,answer=?,explanation=?,tags=?,kind=?,model_answer=?,accepted=?,points=?,status=?,version=?,updated_at=? WHERE id=?`)
-    .run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url, JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, status, version, now(), old.id));
+  (await db.prepare(`UPDATE questions SET level=?,section=?,qtype=?,stem=?,passage=?,audio_script=?,audio_url=?,image_url=?,options=?,answer=?,explanation=?,tags=?,kind=?,model_answer=?,accepted=?,points=?,difficulty=?,etype=?,max_len=?,catalog=?,status=?,version=?,updated_at=? WHERE id=?`)
+    .run(q.level, q.section, q.qtype, q.stem, q.passage, JSON.stringify(q.audio_script), q.audio_url, q.image_url, JSON.stringify(q.options), q.answer, q.explanation, JSON.stringify(q.tags), q.kind, q.model_answer, JSON.stringify(q.accepted), q.points, q.difficulty, q.etype, q.max_len, q.catalog, status, version, now(), old.id));
   (await snapshotVersion(C.rowToQuestion((await db.prepare('SELECT * FROM questions WHERE id=?').get(old.id))), req.user.id));
   res.json({ ok: true, version, status });
 }));
@@ -194,11 +196,25 @@ function parseCSV(text) {
   if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
   return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
 }
-const IMPORT_COLS = ['kind', 'level', 'section', 'qtype', 'stem', 'passage', 'option1', 'option2', 'option3', 'option4', 'answer', 'explanation', 'model_answer', 'accepted', 'points', 'grammar', 'kanji', 'situation', 'audio_script'];
+const IMPORT_COLS = ['kind', 'level', 'section', 'qtype', 'stem', 'passage', 'option1', 'option2', 'option3', 'option4', 'answer', 'explanation', 'model_answer', 'accepted', 'points', 'grammar', 'kanji', 'situation', 'audio_script', 'difficulty', 'etype', 'max_len', 'catalog'];
 // Tên cột tiếng Việt cũng được chấp nhận (giảng viên dễ soạn trên Excel)
 const COL_ALIAS = { 'loai': 'kind', 'loại': 'kind', 'loại câu': 'kind', 'cap do': 'level', 'cấp độ': 'level', 'phan thi': 'section', 'phần thi': 'section', 'dạng câu': 'qtype',
   'câu hỏi': 'stem', 'nội dung': 'stem', 'đoạn văn': 'passage', 'đáp án 1': 'option1', 'đáp án 2': 'option2', 'đáp án 3': 'option3', 'đáp án 4': 'option4',
-  'đáp án đúng': 'answer', 'giải thích': 'explanation', 'đáp án mẫu': 'model_answer', 'đáp án chấp nhận': 'accepted', 'điểm': 'points' };
+  'đáp án đúng': 'answer', 'giải thích': 'explanation', 'đáp án mẫu': 'model_answer', 'đáp án chấp nhận': 'accepted', 'điểm': 'points',
+  'mức độ': 'difficulty', 'độ khó': 'difficulty', 'dạng tự luận': 'etype', 'giới hạn chữ': 'max_len', 'giới hạn': 'max_len', 'danh mục': 'catalog', 'loại đề': 'catalog' };
+const parseCatalog = (v) => { const n = C.normalize(v).replace(/^thi\s+/, '').trim(); return C.EXAM_KINDS[n] ? n : ''; };
+// "Khó vừa", "3", "dịch Nhật → Việt"… → giá trị lưu trong CSDL
+const DIFF_NAMES = C.DIFFS.map((d) => C.normalize(d));
+const parseDiff = (v) => { const s = String(v ?? '').trim(); if (/^[0-5]$/.test(s)) return Number(s); const i = DIFF_NAMES.indexOf(C.normalize(s)); return i > 0 ? i : 0; };
+function parseEtype(v) {
+  const s = String(v || '').trim(); if (C.ETYPES[s]) return s; const n = C.normalize(s);
+  if (/nhat\W*(sang|->|→|-)?\W*viet|日越/.test(n)) return 'ja_vi';
+  if (/viet\W*(sang|->|→|-)?\W*nhat|越日/.test(n)) return 'vi_ja';
+  if (/loi|sua|訂正/.test(n)) return 'fix';
+  if (/viet van|作文|bai van/.test(n)) return 'composition';
+  if (/ngan|short/.test(n)) return 'short';
+  return '';
+}
 const headKey = (h) => { const k = String(h).trim().toLowerCase(); return COL_ALIAS[k] || k; };
 const KIND_ALIAS = { mcq: 'mcq', 'trac-nghiem': 'mcq', 'trắc nghiệm': 'mcq', 'tn': 'mcq', essay: 'essay', 'tu-luan': 'essay', 'tự luận': 'essay', 'tl': 'essay' };
 function rowsToObjects(matrix) {
@@ -217,6 +233,7 @@ function importRowToQuestion(o) {
   return { ...cleanQuestion({ kind, level: (o.level || '').trim().toUpperCase(), section: (o.section || '').trim().toLowerCase(), qtype: o.qtype, stem: o.stem, passage: o.passage,
     options: opts, answer: Number.isNaN(ans) ? -1 : ans - 1, explanation: o.explanation, audio_script: script,
     model_answer: o.model_answer, accepted: o.accepted || '', points: pts === '' ? 1 : Number(pts),
+    difficulty: parseDiff(o.difficulty), catalog: parseCatalog(o.catalog), etype: parseEtype(o.etype), max_len: Number(String(o.max_len || '').trim() || 0),
     tags: { grammar: o.grammar || '', kanji: o.kanji || '', situation: o.situation || '' } }), ...(KIND_ALIAS[k] || !k ? {} : { kind: k }) };
 }
 const TEMPLATE_ROWS = [
@@ -311,13 +328,17 @@ router.post('/import/document/commit', A.requireRole(...AUTHORS), express.json({
       const q = cleanQuestion({ kind, level, section: x.section, qtype: x.qtype || short, stem: x.stem, passage: x.passage, options: opts, answer: ans,
         explanation: String(x.explanation || '').trim() || (kind === 'mcq' && ans >= 0 ? `Đáp án đúng: ${'ABCDEF'[ans]}. ${opts[ans] || ''}` : ''),
         model_answer: kind === 'essay' ? (String(x.model_answer || '').trim() || (String(x.accepted || '').trim() ? '' : '(Giáo viên chấm theo đáp án riêng.)')) : '',
-        accepted: kind === 'essay' ? x.accepted : '', points: Number(x.points) || 1, tags: {} });
+        accepted: kind === 'essay' ? x.accepted : '', points: Number(x.points) || 1, tags: {}, difficulty: Number(b.difficulty) || 0, etype: x.etype, max_len: Number(x.max_len) || 0 });
       const errs = C.validateQuestion(q).map((e) => (e === 'Đáp án đúng không hợp lệ' ? 'Chưa chọn đáp án đúng' : e));
       if (errs.length) errors.push({ label: String(x.label || ''), section: si, errors: errs });
       return q;
     }) });
   });
   if (errors.length) return bad(res, `Còn ${errors.length} câu cần sửa trước khi tạo đề.`, 422, { errors });
+  const anyEssay = built.some((s) => s.qs.some((q) => q.kind === 'essay'));
+  const kindE = kindOf(b.exam_kind, anyEssay);
+  if (C.MCQ_ONLY.includes(kindE) && anyEssay) return bad(res, CERT_MCQ, 422);
+  for (const s of built) for (const q of s.qs) q.catalog = kindE;
   const publish = b.publish !== false;
   const status = !publish ? 'draft' : req.user.role === 'editor' ? 'pending' : 'published';
   const ALL_SECS = ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'];
@@ -327,8 +348,8 @@ router.post('/import/document/commit', A.requireRole(...AUTHORS), express.json({
     const sections = [];
     for (const [i, s] of built.entries()) { const ids = []; for (const q of s.qs) ids.push(await insertQuestion(q, req.user.id, status)); sections.push({ key: 's' + (i + 1), name: s.name, question_ids: ids }); }
     const minutes = Math.min(600, Math.max(5, Number(b.minutes) || 60));
-    const r = await db.prepare('INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(title, 'CUSTOM', level, minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(scoring), status, req.user.id, now(), now());
+    const r = await db.prepare('INSERT INTO exams(title,exam_type,exam_kind,difficulty,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(title, 'CUSTOM', kindE, Number(b.difficulty) || 0, level, minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(scoring), status, req.user.id, now(), now());
     return { id: Number(r.lastInsertRowid), questions: sections.reduce((a, s) => a + s.question_ids.length, 0) };
   });
   res.json({ ...out, status });
@@ -376,21 +397,25 @@ router.post('/import/sheet', A.requireRole(...AUTHORS), express.json({ limit: '2
       } else {
         const t = String(v ?? '').trim().slice(0, 2000);
         if (type === 'text' && !t) missing.push(no);
-        q = { kind: 'essay', options: [], answer: -1, accepted: type === 'text' ? t : '', model_answer: t || '(Giáo viên chấm theo đáp án riêng.)' };
+        q = { kind: 'essay', options: [], answer: -1, accepted: type === 'text' ? t : '', model_answer: t || '(Giáo viên chấm theo đáp án riêng.)', etype: type === 'text' ? 'short' : g.etype, max_len: Number(g.max_len) || 0 };
       }
-      qs.push(cleanQuestion({ ...q, level: M.level, section, qtype: type === 'essay' ? 'Phiếu trả lời · viết' : 'Phiếu trả lời', stem: `Câu ${no}`, points, tags: {} }));
+      qs.push(cleanQuestion({ ...q, difficulty: Number(b.difficulty) || 0, level: M.level, section, qtype: type === 'essay' ? 'Phiếu trả lời · viết' : 'Phiếu trả lời', stem: `Câu ${no}`, points, tags: {} }));
     }
     built.push({ name, qs });
   }
   if (used.size > 400) return bad(res, 'Phiếu trả lời tối đa 400 câu.');
   if (missing.length) return bad(res, `Còn ${missing.length} câu chưa có đáp án: ${missing.slice(0, 30).join(', ')}${missing.length > 30 ? '…' : ''}.`, 422, { missing });
   for (const s of built) for (const q of s.qs) { const errs = C.validateQuestion(q); if (errs.length) return bad(res, `${q.stem}: ${errs.join('; ')}`, 422); }
+  const anyEssay = built.some((s) => s.qs.some((q) => q.kind === 'essay'));
+  const kindE = kindOf(b.exam_kind, anyEssay);
+  if (C.MCQ_ONLY.includes(kindE) && anyEssay) return bad(res, CERT_MCQ, 422);
+  for (const s of built) for (const q of s.qs) q.catalog = kindE;
   const status = !M.publish ? 'draft' : req.user.role === 'editor' ? 'pending' : 'published';
   const out = await tx(async () => {
     const sections = [];
     for (const [i, s] of built.entries()) { const ids = []; for (const q of s.qs) ids.push(await insertQuestion(q, req.user.id, status, true)); sections.push({ key: 's' + (i + 1), name: s.name, question_ids: ids }); }
-    const r = await db.prepare('INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at,doc_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(M.title, 'CUSTOM', M.level, M.minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(M.scoring), status, req.user.id, now(), now(), docUrl);
+    const r = await db.prepare('INSERT INTO exams(title,exam_type,exam_kind,difficulty,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at,doc_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(M.title, 'CUSTOM', kindE, Number(b.difficulty) || 0, M.level, M.minutes, String(b.description || '').slice(0, 2000), JSON.stringify(sections), JSON.stringify(M.scoring), status, req.user.id, now(), now(), docUrl);
     return { id: Number(r.lastInsertRowid), questions: used.size };
   });
   res.json({ ...out, status });
@@ -413,7 +438,7 @@ router.post('/sample/replace', A.requireRole('admin'), wrap(async (req, res) => 
     const options = essay ? [] : [r.option1, r.option2, r.option3, r.option4].filter((o) => String(o ?? '').trim());
     return cleanQuestion({ kind: essay ? 'essay' : 'mcq', level: r.level || D.level, section: r.section, qtype: r.qtype, stem: r.stem, passage: r.passage, options,
       answer: essay ? -1 : Number(r.answer) - 1, explanation: r.explanation, model_answer: r.model_answer, accepted: r.accepted, points: Number(r.points) || 1,
-      tags: { grammar: r.grammar || '', kanji: r.kanji || '', situation: r.situation || '' } });
+      tags: { grammar: r.grammar || '', kanji: r.kanji || '', situation: r.situation || '' }, difficulty: D.difficulty || 0, catalog: D.exam_kind || 'chuyen', etype: r.etype, max_len: Number(r.max_len) || 0 });
   });
   for (const [i, q] of qs.entries()) { const errs = C.validateQuestion(q); if (errs.length) return bad(res, `Đề mẫu mới, câu ${i + 1}: ${errs.join('; ')}`, 500); }
   const out = await tx(async () => {
@@ -436,17 +461,20 @@ router.post('/sample/replace', A.requireRole('admin'), wrap(async (req, res) => 
     if (qs.length) {
       const ids = []; for (const q of qs) ids.push(await insertQuestion(q, req.user.id, 'published'));
       const sections = D.parts.map((pt) => ({ key: pt.key, name: pt.name, question_ids: ids.slice(pt.from, pt.to) }));
-      const r = await db.prepare("INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'published',?,?,?)")
-        .run(D.title, D.exam_type || 'CUSTOM', D.level, D.minutes, D.description, JSON.stringify(sections), JSON.stringify(D.scoring), req.user.id, now(), now());
+      const r = await db.prepare("INSERT INTO exams(title,exam_type,exam_kind,difficulty,level,duration_min,description,sections,scoring,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'published',?,?,?)")
+        .run(D.title, D.exam_type || 'CUSTOM', D.exam_kind || 'chuyen', D.difficulty || 0, D.level, D.minutes, D.description, JSON.stringify(sections), JSON.stringify(D.scoring), req.user.id, now(), now());
       created = { id: Number(r.lastInsertRowid), questions: ids.length };
     }
     return { deleted_exams: delIds.length, deleted_questions: dropQ.length, created };
   });
   res.json(out);
 }));
+const CERT_MCQ = 'Đề JLPT và BJT chỉ gồm câu trắc nghiệm. Đề có câu tự luận, dịch hoặc viết văn hãy chọn danh mục "Thi chuyên" hoặc "EJU".';
+const kindOf = (want, anyEssay) => (C.EXAM_KINDS[want] ? want : anyEssay ? 'chuyen' : 'jlpt');
+const hasEssay = async (ids) => ids.length > 0 && !!(await db.prepare("SELECT 1 FROM questions WHERE id = ANY(?) AND kind='essay' LIMIT 1").get(ids));
 function cleanExam(b) {
   const sections = (b.sections || []).map((s) => ({ key: s.key, name: s.name || C.SECTIONS[s.key] || s.key, question_ids: (s.question_ids || []).map(Number).filter(Number.isInteger) }));
-  return { title: String(b.title || '').trim(), exam_type: b.exam_type || 'JLPT', level: b.level, duration_min: Number(b.duration_min) || 30, description: String(b.description || ''), sections, scoring: b.scoring || {} };
+  return { title: String(b.title || '').trim(), exam_type: b.exam_type || 'JLPT', exam_kind: C.EXAM_KINDS[b.exam_kind] ? b.exam_kind : '', difficulty: Number(b.difficulty) || 0, level: b.level, duration_min: Number(b.duration_min) || 30, description: String(b.description || ''), sections, scoring: b.scoring || {} };
 }
 async function examErrors(e, user) {
   const errs = [];
@@ -459,13 +487,17 @@ async function examErrors(e, user) {
   if (!['JLPT', 'JFT', 'NAT', 'CUSTOM'].includes(e.exam_type)) errs.push('Kỳ thi không hợp lệ');
   if (!e.sections.length || e.sections.some((s) => !s.question_ids.length)) errs.push('Mỗi phần thi cần ít nhất một câu hỏi');
   if (!e.scoring?.groups?.length || !e.scoring.total_pass) errs.push('Thiếu cấu hình thang điểm');
+  if (!(Number.isInteger(e.difficulty) && e.difficulty >= 0 && e.difficulty <= 5)) errs.push('Mức độ khó phải từ 1 đến 5');
+  const essay = await hasEssay(e.sections.flatMap((s) => s.question_ids));
+  e.exam_kind = kindOf(e.exam_kind, essay);   // không chọn danh mục: tự xếp theo câu trong đề
+  if (C.MCQ_ONLY.includes(e.exam_kind) && essay) errs.push(CERT_MCQ);
   return errs;
 }
 router.post('/exams', A.requireRole(...AUTHORS), wrap(async (req, res) => {
   const e = cleanExam(req.body || {}); const errs = await examErrors(e, req.user);
   if (errs.length) return bad(res, errs.join('; '), 422);
-  const r = (await db.prepare('INSERT INTO exams(title,exam_type,level,duration_min,description,sections,scoring,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(e.title, e.exam_type, e.level, e.duration_min, e.description, JSON.stringify(e.sections), JSON.stringify(e.scoring), req.user.id, now(), now()));
+  const r = (await db.prepare('INSERT INTO exams(title,exam_type,exam_kind,difficulty,level,duration_min,description,sections,scoring,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(e.title, e.exam_type, e.exam_kind, e.difficulty, e.level, e.duration_min, e.description, JSON.stringify(e.sections), JSON.stringify(e.scoring), req.user.id, now(), now()));
   res.json({ id: Number(r.lastInsertRowid) });
 }));
 router.put('/exams/:id', A.requireRole(...AUTHORS), wrap(async (req, res) => {
@@ -475,8 +507,8 @@ router.put('/exams/:id', A.requireRole(...AUTHORS), wrap(async (req, res) => {
   const e = cleanExam(req.body || {}); const errs = await examErrors(e, req.user);
   if (errs.length) return bad(res, errs.join('; '), 422);
   const status = old.status === 'published' && req.user.role === 'editor' ? 'pending' : old.status;
-  (await db.prepare('UPDATE exams SET title=?,exam_type=?,level=?,duration_min=?,description=?,sections=?,scoring=?,status=?,version=version+1,updated_at=? WHERE id=?')
-    .run(e.title, e.exam_type, e.level, e.duration_min, e.description, JSON.stringify(e.sections), JSON.stringify(e.scoring), status, now(), old.id));
+  (await db.prepare('UPDATE exams SET title=?,exam_type=?,exam_kind=?,difficulty=?,level=?,duration_min=?,description=?,sections=?,scoring=?,status=?,version=version+1,updated_at=? WHERE id=?')
+    .run(e.title, e.exam_type, e.exam_kind, e.difficulty, e.level, e.duration_min, e.description, JSON.stringify(e.sections), JSON.stringify(e.scoring), status, now(), old.id));
   res.json({ ok: true });
 }));
 router.post('/exams/:id/status', wrap(async (req, res) => {

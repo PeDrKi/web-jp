@@ -229,7 +229,9 @@ const P4 = [
     { points: 20, model: 'Gợi ý chấm (20 điểm):\n- Nội dung (8): đúng chủ đề, có ý kiến rõ ràng, có ví dụ/trải nghiệm cụ thể.\n- Bố cục (4): mở bài – thân bài – kết luận, liên kết đoạn hợp lý.\n- Ngữ pháp & từ vựng (6): dùng đúng, đa dạng; lỗi nhỏ trừ ít, lỗi làm sai nghĩa trừ nhiều.\n- Hình thức (2): đủ 400–500 chữ, thể văn viết (だ・である) thống nhất.' }),
 ];
 
-const rows = [...P1, ...P2, ...P3, ...P4];
+// Dạng tự luận + giới hạn chữ theo từng phần (dịch Nhật → Việt đếm theo từ, còn lại đếm theo chữ)
+const ETYPE = [[/並べ替え/, 'short', 10], [/誤文訂正/, 'fix', 60], [/漢字の読み/, 'short', 20], [/記述/, '', 120], [/日越翻訳/, 'ja_vi', 300], [/越日翻訳/, 'vi_ja', 150], [/作文/, 'composition', 500]];
+const rows = [...P1, ...P2, ...P3, ...P4].map((r) => { if (r.kind !== 'essay') return r; const m = ETYPE.find(([re]) => re.test(r.qtype)); return m ? { ...r, etype: m[1], max_len: m[2] } : r; });
 // Các phần của đề theo đúng bản in (chỉ số dòng trong rows)
 const parts = [
   { key: 'p1', name: '第1部 言語知識（問題1〜6）', from: 0, to: P1.length },
@@ -239,7 +241,7 @@ const parts = [
 ];
 const ALL = ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'];
 module.exports = {
-  rows, parts, level: L, exam_type: 'CUSTOM', minutes: 150,
+  rows, parts, level: L, exam_type: 'CUSTOM', exam_kind: 'chuyen', difficulty: 4, minutes: 150,
   title: 'Tuyển sinh lớp 10 chuyên tiếng Nhật – Đề số 01',
   description: 'Đề thi tuyển sinh lớp 10 THPT chuyên tiếng Nhật, 150 phút: ngôn ngữ (từ vựng, trợ từ, sắp xếp câu, sửa lỗi, ngữ pháp, điền đoạn văn), đọc kanji và đọc hiểu, dịch Nhật–Việt và Việt–Nhật, 作文 400–500 chữ. Phần trắc nghiệm chấm tự động; phần viết do giáo viên chấm.',
   scoring: { groups: [{ key: 'all', name: 'Toàn bài', sections: ALL, max: 10, min: 0 }], total_pass: 5, decimals: 1, note: 'Thang điểm 10, quy đổi theo điểm từng câu. Phần viết cần giáo viên chấm xong mới ra điểm chính thức.' },

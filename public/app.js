@@ -4,6 +4,26 @@ const S = { user: null, route: null, timers: [], cleanup: [] };
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const SECTIONS = { vocab: 'Văn tự - từ vựng', conversation: 'Hội thoại và biểu hiện', grammar: 'Ngữ pháp', reading: 'Đọc hiểu', listening: 'Nghe hiểu', writing: 'Viết / Tự luận' };
+const ETYPES = { short: 'Trả lời ngắn', fix: 'Tìm và sửa lỗi sai', ja_vi: 'Dịch Nhật → Việt', vi_ja: 'Dịch Việt → Nhật', composition: 'Viết văn (作文)' };
+const DIFFS = ['Chưa xếp mức', 'Cơ bản', 'Vừa', 'Khó vừa', 'Khó', 'Rất khó'];
+const EXAM_KINDS = { chuyen: 'Thi chuyên', jlpt: 'JLPT', bjt: 'BJT', eju: 'EJU' };
+const MCQ_ONLY = ['jlpt', 'bjt'];
+// Giống lib/content.js: dịch sang tiếng Việt đếm theo từ, viết tiếng Nhật đếm theo chữ (không tính khoảng trắng)
+const lenUnit = (etype) => (etype === 'ja_vi' ? 'words' : 'chars');
+const countLen = (t, unit) => (unit === 'words' ? (String(t || '').match(/\S+/g) || []).length : [...String(t || '').replace(/\s/g, '')].length);
+function clipLen(t, max, unit) {
+  t = String(t || '');
+  if (!max || countLen(t, unit) <= max) return t;
+  if (unit === 'words') { const re = /\S+/g; let m, n = 0; while ((m = re.exec(t))) if (++n === max) return t.slice(0, m.index + m[0].length); return t; }
+  let n = 0, out = '';
+  for (const ch of t) { if (!/\s/.test(ch)) { if (n === max) break; n++; } out += ch; }
+  return out;
+}
+const lenTxt = (q, t) => { const u = lenUnit(q.etype), n = countLen(t, u); return `${n}${q.max_len ? '/' + q.max_len : ''} ${u === 'words' ? 'từ' : 'chữ'}`; };
+// Ô tự luận: chặn gõ quá giới hạn, trả về nội dung đã cắt
+const limitInput = (el, q) => { const v = clipLen(el.value, q.max_len, lenUnit(q.etype)); if (v !== el.value) { el.value = v; toast(`Đã đủ giới hạn ${q.max_len} ${lenUnit(q.etype) === 'words' ? 'từ' : 'chữ'}.`, true); } return v; };
+const ESSAY_HINT = { fix: 'Ghi phần sai và sửa lại cho đúng…', ja_vi: 'Viết bản dịch tiếng Việt…', vi_ja: 'Viết bản dịch tiếng Nhật…', composition: 'Viết bài văn bằng tiếng Nhật…', short: 'Gõ câu trả lời…' };
+const diffChip = (d) => (d ? `<span class="chip diff d${d}">${DIFFS[d]}</span>` : '');
 const STATUS = { draft: 'Nháp', pending: 'Chờ duyệt', published: 'Đã đăng', removed: 'Đã gỡ' };
 const REPORT_TYPES = { 'dap-an': 'Đáp án sai', 'de-bai': 'Đề bài sai/khó hiểu', audio: 'Lỗi audio', 'giai-thich': 'Giải thích chưa đúng', khac: 'Khác' };
 
@@ -187,23 +207,26 @@ function planCard(p) {
 }
 
 /* ---------- Kho đề (FR-03, FR-04) ---------- */
-const examCard = (e) => `<a class="card" href="#/de/${e.id}"><div class="row between"><span class="chip">${esc(e.exam_type === 'CUSTOM' ? 'Đề giảng viên' : e.exam_type)} ${esc(e.level)}</span><span class="small muted">${e.duration_min} phút · ${e.question_count} câu</span></div>
+const examCard = (e) => `<a class="card" href="#/de/${e.id}"><div class="row between"><span class="row" style="gap:6px"><span class="chip ${e.exam_kind === 'chuyen' ? 'verm' : ''}">${EXAM_KINDS[e.exam_kind] || ''} ${esc(e.level)}</span>${diffChip(e.difficulty)}</span><span class="small muted">${e.duration_min} phút · ${e.question_count} câu</span></div>
   <h3 class="mt">${esc(e.title)}</h3><div class="row">${e.sections.map((s) => `<span class="chip ${s.key === 'listening' ? 'verm' : ''}">${esc(SECTIONS[s.key] || s.name)} (${s.count})</span>`).join('')}</div></a>`;
 route(/^\/de$/, async () => {
   const q = S.query;
+  let cat = EXAM_KINDS[q.loai] ? q.loai : '';
   view(`<h1>Kho đề</h1>
+  <div class="tabs mb" role="tablist" id="cat-tabs">${[['', 'Tất cả'], ...Object.entries(EXAM_KINDS)].map(([k, v]) => `<button class="tab ${cat === k ? 'on' : ''}" role="tab" aria-selected="${cat === k}" data-cat="${k}">${v}</button>`).join('')}</div>
   <div class="card flat"><div class="field-row">
-    <div><label for="f-type">Kỳ thi</label><select id="f-type"><option value="">Tất cả</option><option value="JLPT">JLPT</option><option value="JFT">JFT-Basic</option><option value="NAT">NAT-TEST</option><option value="CUSTOM">Đề của giảng viên</option></select></div>
     <div><label for="f-lv">Cấp độ</label><select id="f-lv"><option value="">Tất cả</option>${['N5', 'N4', 'N3', 'N2', 'N1'].map((l) => `<option>${l}</option>`).join('')}</select></div>
+    <div><label for="f-diff">Mức độ</label><select id="f-diff"><option value="">Tất cả</option>${DIFFS.slice(1).map((d, i) => `<option value="${i + 1}">${d}</option>`).join('')}</select></div>
     <div><label for="f-sec">Phần thi</label><select id="f-sec"><option value="">Tất cả</option>${Object.entries(SECTIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
     <div><label for="f-q">Từ khóa</label><input id="f-q" type="search" placeholder="Tên đề…"></div></div></div>
   <div id="exam-list" class="grid g2 mt"></div>`);
   const load = async () => {
-    const p = new URLSearchParams(); for (const [k, id] of [['exam_type', 'f-type'], ['level', 'f-lv'], ['section', 'f-sec'], ['q', 'f-q']]) if ($('#' + id).value) p.set(k, $('#' + id).value);
+    const p = new URLSearchParams(); if (cat) p.set('exam_kind', cat); for (const [k, id] of [['level', 'f-lv'], ['difficulty', 'f-diff'], ['section', 'f-sec'], ['q', 'f-q']]) if ($('#' + id).value) p.set(k, $('#' + id).value);
     const list = await api('GET', '/exams?' + p);
-    $('#exam-list').innerHTML = list.length ? list.map(examCard).join('') : '<div class="empty" style="grid-column:1/-1">Chưa có đề phù hợp. JFT-Basic, N2, N1 và NAT-TEST sẽ có ở các giai đoạn sau.</div>';
+    $('#exam-list').innerHTML = list.length ? list.map(examCard).join('') : '<div class="empty" style="grid-column:1/-1">Chưa có đề phù hợp. Đề mới sẽ được giảng viên bổ sung dần.</div>';
   };
-  $$('#f-type,#f-lv,#f-sec').forEach((el) => el.onchange = load); $('#f-q').oninput = load;
+  $$('#f-lv,#f-diff,#f-sec').forEach((el) => el.onchange = load); $('#f-q').oninput = load;
+  $$('#cat-tabs [data-cat]').forEach((b) => b.onclick = () => { cat = b.dataset.cat; $$('#cat-tabs .tab').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); }); load(); });
   if (q.level) $('#f-lv').value = q.level; load();
 });
 route(/^\/de\/(\d+)$/, async (id) => {
@@ -211,7 +234,7 @@ route(/^\/de\/(\d+)$/, async (id) => {
   if (!e) return view('<div class="empty">Không tìm thấy đề.</div>');
   view(`<a href="#/de" class="small">← Kho đề</a><h1 class="mt">${esc(e.title)}</h1>
   <p class="muted">${esc(e.description)}</p>
-  <div class="card"><div class="row between"><div><b>${e.question_count} câu · ${e.duration_min} phút</b></div><span class="chip">${esc(e.exam_type)} ${esc(e.level)}</span></div>
+  <div class="card"><div class="row between"><div><b>${e.question_count} câu · ${e.duration_min} phút</b></div><span class="row" style="gap:6px"><span class="chip ${e.exam_kind === 'chuyen' ? 'verm' : ''}">${EXAM_KINDS[e.exam_kind] || ''} ${esc(e.level)}</span>${diffChip(e.difficulty)}</span></div>
     <table class="mt"><tr><th>Phần thi</th><th>Số câu</th><th></th></tr>${e.sections.map((s) => `<tr><td>${esc(SECTIONS[s.key] || s.name)}</td><td>${s.count}</td><td><button class="sm" data-sec="${s.key}">Luyện riêng phần này</button></td></tr>`).join('')}</table></div>
   <div class="grid g2 mt">
     <div class="card"><h3>Thi thật</h3><p class="muted small">Có đồng hồ đếm ngược. Hết giờ tự nộp. Phần nghe chỉ nghe một lần, không xem đáp án trước khi nộp. Rời tab sẽ bị cảnh báo.</p><button class="accent" id="go-real">Bắt đầu thi</button></div>
@@ -232,22 +255,24 @@ route(/^\/luyen$/, async () => {
   <div class="card"><div class="field-row">
     <div><label for="p-lv">Cấp độ</label><select id="p-lv"><option value="">Tất cả</option>${levels.map((l) => `<option>${l}</option>`).join('')}</select></div>
     <div><label for="p-sec">Phần thi</label><select id="p-sec"><option value="">Tất cả</option>${Object.entries(SECTIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+    <div><label for="p-cat">Danh mục</label><select id="p-cat"><option value="">Tất cả</option>${Object.entries(EXAM_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+    <div><label for="p-df">Mức độ</label><select id="p-df"><option value="">Tất cả</option>${DIFFS.slice(1).map((d, i) => `<option value="${i + 1}">${d}</option>`).join('')}</select></div>
     <div><label for="p-qt">Dạng câu</label><select id="p-qt"></select></div>
     <div><label for="p-n">Số câu</label><select id="p-n">${[5, 10, 15, 20].map((n) => `<option ${n === 10 ? 'selected' : ''}>${n}</option>`).join('')}</select></div></div>
     <div class="row mt"><button class="primary" id="p-go">Bắt đầu</button><span class="muted small" id="p-info"></span></div></div>`);
   const refresh = () => {
-    const lv = $('#p-lv').value, sec = $('#p-sec').value;
-    const m = opts.filter((o) => (!lv || o.level === lv) && (!sec || o.section === sec));
+    const lv = $('#p-lv').value, sec = $('#p-sec').value, df = Number($('#p-df').value), ct = $('#p-cat').value;
+    const m = opts.filter((o) => (!lv || o.level === lv) && (!sec || o.section === sec) && (!df || o.difficulty === df) && (!ct || o.catalog === ct));
     const types = [...new Set(m.map((o) => o.qtype).filter(Boolean))];
     const cur = $('#p-qt').value;
     $('#p-qt').innerHTML = '<option value="">Tất cả</option>' + types.map((t) => `<option ${t === cur ? 'selected' : ''}>${esc(t)}</option>`).join('');
     $('#p-info').textContent = `${m.reduce((a, o) => a + o.n, 0)} câu có sẵn`;
   };
-  $('#p-lv').onchange = $('#p-sec').onchange = refresh;
+  $('#p-lv').onchange = $('#p-sec').onchange = $('#p-df').onchange = $('#p-cat').onchange = refresh;
   if (q.level) $('#p-lv').value = q.level; if (q.section) $('#p-sec').value = q.section; refresh();
   $('#p-go').onclick = async () => {
     if (!S.user) return nav('/dang-nhap?next=' + encodeURIComponent(location.hash.slice(1)));
-    try { const a = await api('POST', '/attempts', { practice: { level: $('#p-lv').value, section: $('#p-sec').value, qtype: $('#p-qt').value, count: Number($('#p-n').value), grammar: q.grammar || '' } }); nav('/lam/' + a.id); } catch (e) { toast(e.message, true); }
+    try { const a = await api('POST', '/attempts', { practice: { level: $('#p-lv').value, section: $('#p-sec').value, qtype: $('#p-qt').value, difficulty: Number($('#p-df').value) || 0, catalog: $('#p-cat').value, count: Number($('#p-n').value), grammar: q.grammar || '' } }); nav('/lam/' + a.id); } catch (e) { toast(e.message, true); }
   };
 });
 
@@ -306,8 +331,8 @@ route(/^\/lam\/(\d+)$/, async (id) => {
         ${q.image_url ? `<img src="${esc(q.image_url)}" alt="Hình minh họa của đề" style="max-width:100%;border-radius:10px;margin-bottom:12px">` : ''}
         ${showPassage ? `<div class="passage">${rich(q.passage)}</div>` : ''}
         <p class="stem">${rich(q.stem)}</p>
-        ${essay ? `<label for="t-essay" class="small muted">Câu trả lời của bạn (tự luận · ${q.points} điểm)</label><textarea id="t-essay" class="jp" rows="7" maxlength="5000" placeholder="Gõ câu trả lời bằng tiếng Nhật (hoặc theo yêu cầu đề)…" ${ck ? 'disabled' : ''}>${esc(a.t || '')}</textarea>
-          <div class="small muted"><span id="t-count">${(a.t || '').length}</span>/5000 ký tự · tự động lưu</div>` : ''}
+        ${essay ? `<label for="t-essay" class="small muted">Câu trả lời của bạn (${esc(ETYPES[q.etype] || 'tự luận')} · ${q.points} điểm${q.max_len ? ` · tối đa ${q.max_len} ${lenUnit(q.etype) === 'words' ? 'từ' : 'chữ'}` : ''})</label><textarea id="t-essay" class="jp" rows="${q.etype === 'composition' ? 12 : q.etype === 'short' ? 2 : 7}" maxlength="5000" placeholder="${ESSAY_HINT[q.etype] || 'Gõ câu trả lời bằng tiếng Nhật (hoặc theo yêu cầu đề)…'}" ${ck ? 'disabled' : ''}>${esc(a.t || '')}</textarea>
+          <div class="small muted"><span id="t-count">${lenTxt(q, a.t)}</span> · tự động lưu</div>` : ''}
         <div class="opts" role="radiogroup" aria-label="Đáp án" ${essay ? 'hidden' : ''}>${q.options.map((o, i) => {
           let c = a.c === i ? 'sel' : '';
           if (ck) { if (i === ck.answer) c = 'right'; else if (a.c === i) c = 'wrong'; }
@@ -338,7 +363,7 @@ route(/^\/lam\/(\d+)$/, async (id) => {
   function wire() {
     const q = qs[cur];
     $$('.opt').forEach((b) => b.onclick = () => { change(q.id, { c: Number(b.dataset.i) }); draw(); });
-    const te = $('#t-essay'); if (te) te.oninput = () => { typeEssay(q.id, te.value); $('#t-count').textContent = te.value.length; const ch = $('#t-check'); if (ch) ch.disabled = !te.value.trim(); const pal = $(`[data-go="${cur}"]`); if (pal) pal.classList.toggle('done', !!te.value.trim()); };
+    const te = $('#t-essay'); if (te) te.oninput = () => { typeEssay(q.id, limitInput(te, q)); $('#t-count').textContent = lenTxt(q, te.value); const ch = $('#t-check'); if (ch) ch.disabled = !te.value.trim(); const pal = $(`[data-go="${cur}"]`); if (pal) pal.classList.toggle('done', !!te.value.trim()); };
     $$('[data-go]').forEach((b) => b.onclick = () => { cur = Number(b.dataset.go); saveLocal(); draw(); });
     $('#t-prev').onclick = () => { cur--; saveLocal(); draw(); }; $('#t-next').onclick = () => { if (cur === qs.length - 1) return submit(); cur++; saveLocal(); draw(); };
     const tp = $('#t-pal'); if (tp) tp.onclick = () => $('#pal-box').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -372,8 +397,9 @@ route(/^\/lam\/(\d+)$/, async (id) => {
     const isPdf = /\.pdf(\?|#|$)/i.test(A.doc_url);
     const row = (q, i) => {
       const a = ans[q.id] || {};
-      if (q.kind === 'essay') { const long = /viết/.test(q.qtype || '');
-        return `<div class="srow ${long ? 'long' : ''}"><span class="sn">${noOf(q, i)}</span>${long ? `<textarea class="jp" rows="3" data-sq="${q.id}" maxlength="5000" aria-label="Câu ${noOf(q, i)}">${esc(a.t || '')}</textarea>` : `<input class="jp" data-sq="${q.id}" maxlength="300" value="${esc(a.t || '')}" aria-label="Câu ${noOf(q, i)}" autocomplete="off">`}</div>`; }
+      if (q.kind === 'essay') { const long = /viết/.test(q.qtype || '') || ['composition', 'ja_vi', 'vi_ja'].includes(q.etype);
+        const ph = esc([ETYPES[q.etype], q.max_len ? `tối đa ${q.max_len} ${lenUnit(q.etype) === 'words' ? 'từ' : 'chữ'}` : ''].filter(Boolean).join(' · '));
+        return `<div class="srow ${long ? 'long' : ''}"><span class="sn">${noOf(q, i)}</span>${long ? `<textarea class="jp" rows="3" data-sq="${q.id}" maxlength="5000" placeholder="${ph}" aria-label="Câu ${noOf(q, i)}">${esc(a.t || '')}</textarea>` : `<input class="jp" data-sq="${q.id}" maxlength="300" placeholder="${ph}" value="${esc(a.t || '')}" aria-label="Câu ${noOf(q, i)}" autocomplete="off">`}</div>`; }
       return `<div class="srow" role="radiogroup" aria-label="Câu ${noOf(q, i)}"><span class="sn">${noOf(q, i)}</span>${q.options.map((o, k) => `<button class="bub ${a.c === k ? 'on' : ''}" role="radio" aria-checked="${a.c === k}" data-q="${q.id}" data-i="${k}">${esc(o)}</button>`).join('')}</div>`;
     };
     view(`
@@ -399,7 +425,7 @@ route(/^\/lam\/(\d+)$/, async (id) => {
       const v = ans[qid]?.c === k ? null : k;   // bấm lại để bỏ chọn
       change(qid, { c: v });
       $$(`.bub[data-q="${qid}"]`, pane).forEach((x) => { const on = v != null && Number(x.dataset.i) === v; x.classList.toggle('on', on); x.setAttribute('aria-checked', on); }); count(); };
-    pane.oninput = (e) => { const t = e.target; if (!t.dataset.sq) return; typeEssay(Number(t.dataset.sq), t.value); count(); };
+    pane.oninput = (e) => { const t = e.target; if (!t.dataset.sq) return; const q = qs.find((x) => x.id === Number(t.dataset.sq)); typeEssay(q.id, limitInput(t, q)); count(); };
     $('#t-submit').onclick = submit; $('#s-submit').onclick = submit;
     $$('.sheet-tabs [data-pane]').forEach((b) => b.onclick = () => { $$('.sheet-tabs .tab').forEach((x) => x.classList.toggle('on', x === b)); $('.sheet-wrap').dataset.show = b.dataset.pane; scrollTo(0, 0); });
     if (isPdf) renderPdf(A.doc_url, $('#doc-pages'));
@@ -510,7 +536,7 @@ route(/^\/ketqua\/(\d+)$/, async (id) => {
   }
   function essayReview({ q, i, it }) {
     const st = !it.graded ? ['warn', 'Chờ chấm'] : !it.answered ? ['bad', 'Chưa làm'] : [it.ok ? 'ok' : 'bad', `${it.points}/${it.max} điểm`];
-    return `<div class="card mb qcard" id="rq${q.id}"><div class="row between mb"><span class="chip ${st[0]}">Câu ${i + 1} · Tự luận · ${st[1]}</span><span class="small muted">${esc(SECTIONS[q.section] || q.section)}${q.qtype ? ' · ' + esc(q.qtype) : ''}</span></div>
+    return `<div class="card mb qcard" id="rq${q.id}"><div class="row between mb"><span class="chip ${st[0]}">Câu ${i + 1} · ${esc(ETYPES[q.etype] || 'Tự luận')} · ${st[1]}</span><span class="small muted">${esc(SECTIONS[q.section] || q.section)}${q.qtype ? ' · ' + esc(q.qtype) : ''}</span></div>
       ${q.has_audio ? `<div class="audio-box"><button class="ic" data-play="${q.id}" aria-label="Nghe lại">▶</button><div><b>Nghe lại</b></div></div>` : ''}
       ${q.image_url ? `<img src="${esc(q.image_url)}" alt="" style="max-width:100%;border-radius:10px">` : ''}
       ${q.passage ? `<div class="passage">${rich(q.passage)}</div>` : ''}<p class="stem">${rich(q.stem)}</p>
@@ -662,18 +688,7 @@ function pwStrength(inp, out) {
 }
 const showErr = (er, sel = '#err') => { const el = $(sel); el.hidden = false; el.textContent = er.message || er; };
 const authCfg = async () => (S.authCfg ||= await api('GET', '/auth/config').catch(() => ({})));
-// Nút "Đăng nhập bằng Google" (chỉ hiện khi quản trị viên đã cấu hình GOOGLE_CLIENT_ID)
-async function googleButton(box, after) {
-  const cfg = await authCfg(); if (!cfg.google_client_id || !box) return;
-  box.hidden = false;
-  if (!window.google?.accounts) await new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = ok; sc.onerror = fail; document.head.appendChild(sc); }).catch(() => {});
-  if (!window.google?.accounts) { box.innerHTML = '<div class="small muted">Không tải được nút Google.</div>'; return; }
-  google.accounts.id.initialize({ client_id: cfg.google_client_id, callback: async (r) => {
-    try { S.user = await api('POST', '/auth/google', { credential: r.credential }); applySettings(); after(S.user); } catch (er) { showErr(er); } } });
-  google.accounts.id.renderButton($('.gbtn', box), { theme: 'outline', size: 'large', text: 'continue_with', locale: 'vi', width: Math.min(360, box.clientWidth || 360) });
-}
 const afterLogin = (u) => nav(S.query.next ? decodeURIComponent(S.query.next) : u.is_new ? '/cai-dat?moi=1' : (['admin', 'editor', 'reviewer', 'teacher'].includes(u.role) && !S.query.next ? '/quan-tri' : '/'));
-const googleBox = '<div id="gbox" hidden><div class="or"><span>hoặc</span></div><div class="gbtn"></div></div>';
 
 route(/^\/dang-nhap$/, () => {
   if (S.user) return nav('/');
@@ -682,8 +697,8 @@ route(/^\/dang-nhap$/, () => {
     ${pwField('p', 'Mật khẩu', 'current-password')}
     <div class="row between mt"><label class="inline"><input type="checkbox" id="rm" checked> Ghi nhớ đăng nhập</label><a class="small" href="#/quen-mat-khau">Quên mật khẩu?</a></div>
     <div id="err" class="alert bad mt" hidden></div><button class="primary mt" style="width:100%">Đăng nhập</button></form>
-    ${googleBox}<p class="small muted mt">Chưa có tài khoản? <a href="#/dang-ky${S.query.next ? '?next=' + encodeURIComponent(S.query.next) : ''}">Đăng ký miễn phí</a></p></div>`);
-  bindEyes(); googleButton($('#gbox'), afterLogin);
+    <p class="small muted mt">Chưa có tài khoản? <a href="#/dang-ky${S.query.next ? '?next=' + encodeURIComponent(S.query.next) : ''}">Đăng ký miễn phí</a></p></div>`);
+  bindEyes();
   $('#lf').onsubmit = async (e) => { e.preventDefault(); const em = $('#e').value.trim(); if (!em || !$('#p').value) return showErr('Nhập email và mật khẩu.');
     const btn = e.submitter; btn.disabled = true;
     try { S.user = await api('POST', '/auth/login', { email: em, password: $('#p').value, remember: $('#rm').checked }); applySettings(); afterLogin(S.user); } catch (er) { showErr(er); } finally { btn.disabled = false; } };
@@ -695,8 +710,8 @@ route(/^\/dang-ky$/, () => {
     ${pwField('p2', 'Nhập lại mật khẩu', 'new-password')}
     <input name="website" id="hp" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
     <div id="err" class="alert bad mt" hidden></div><button class="accent mt" style="width:100%">Đăng ký</button></form>
-    ${googleBox}<p class="small muted mt">Đã có tài khoản? <a href="#/dang-nhap">Đăng nhập</a></p></div>`);
-  bindEyes(); pwStrength($('#p'), $('#ps')); googleButton($('#gbox'), afterLogin);
+    <p class="small muted mt">Đã có tài khoản? <a href="#/dang-nhap">Đăng nhập</a></p></div>`);
+  bindEyes(); pwStrength($('#p'), $('#ps'));
   $('#rf').onsubmit = async (e) => { e.preventDefault();
     const em = $('#e').value.trim(), pw = $('#p').value;
     if (!$('#n').value.trim()) return showErr('Nhập tên hiển thị.');
@@ -739,9 +754,9 @@ route(/^\/cai-dat$/, async () => {
   <div class="card mt"><h3>Hiển thị</h3><div class="row"><label class="inline"><input type="checkbox" id="s-f" ${S.settings.furigana === false ? '' : 'checked'}> Furigana</label><label class="inline"><input type="checkbox" id="s-v" ${S.settings.translation === false ? '' : 'checked'}> Bản dịch tiếng Việt</label>
     <select id="s-fs" aria-label="Cỡ chữ" style="width:auto">${[['s', 'Chữ nhỏ'], ['m', 'Chữ vừa'], ['l', 'Chữ lớn'], ['xl', 'Chữ rất lớn']].map(([v, t]) => `<option value="${v}" ${(S.settings.fontSize || 'm') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div>
   <div class="card mt"><h3>Tài khoản</h3><form id="nf" class="row" style="align-items:flex-end"><div style="flex:1;min-width:200px"><label for="nm">Tên hiển thị</label><input id="nm" maxlength="60" required value="${esc(u.name)}"></div><button>Lưu tên</button></form>
-    <p class="muted mt">Email: <b>${esc(u.email)}</b>${u.google ? ' · đã liên kết Google' : ''}</p>
+    <p class="muted mt">Email: <b>${esc(u.email)}</b></p>
     <div class="row"><a class="btn" href="#/bao-loi">Báo lỗi của tôi</a><button id="lo">Đăng xuất</button><button id="loa" title="Dùng khi bạn đăng nhập ở máy lạ hoặc nghi bị lộ mật khẩu">Đăng xuất mọi thiết bị</button>${u.role === 'learner' ? '<button class="danger" id="del">Xóa tài khoản và dữ liệu</button>' : ''}</div></div>
-  <div class="card mt"><h3>${u.has_password ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h3>${u.has_password ? '' : '<p class="small muted">Bạn đang đăng nhập bằng Google. Đặt thêm mật khẩu để có thể đăng nhập bằng email.</p>'}<form id="pf" novalidate style="max-width:420px">
+  <div class="card mt"><h3>${u.has_password ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}</h3>${u.has_password ? '' : '<p class="small muted">Tài khoản chưa có mật khẩu. Đặt mật khẩu để đăng nhập bằng email.</p>'}<form id="pf" novalidate style="max-width:420px">
     ${u.has_password ? pwField('pc', 'Mật khẩu hiện tại', 'current-password') : ''}${pwField('pn', 'Mật khẩu mới', 'new-password')}<div id="ps" class="small"></div>${pwField('pn2', 'Nhập lại mật khẩu mới', 'new-password')}
     <div id="perr" class="alert bad mt" hidden></div><button class="primary mt">Lưu mật khẩu</button><div class="small muted mt">Sau khi đổi, các thiết bị khác sẽ bị đăng xuất.</div></form></div>`);
   bindEyes(); pwStrength($('#pn'), $('#ps'));

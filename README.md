@@ -34,7 +34,7 @@ Kiểm thử luôn chạy trên DB tạm; muốn kiểm thử trên Postgres th�
 - **Nội dung chỉ là mẫu**: 8 đề rút gọn (9–17 câu, 20–25 phút), không phải đủ khối lượng thi thật. Giáo viên cần soạn và duyệt thêm; câu mẫu cũng nên được giáo viên tiếng Nhật rà soát.
 - **Audio**: dùng giọng tổng hợp của trình duyệt (Web Speech, cần có giọng ja-JP; chất lượng tùy thiết bị). Có sẵn upload file mp3/wav và trình phát khi câu có `audio_url`.
 - Điểm JLPT là **quy đổi theo tỷ lệ đúng** (mô phỏng), không phải thang tương đương hóa của kỳ thi thật.
-- Đăng nhập Google, nhập file Word, bản dịch tiếng Việt cho từng đề bài (chỉ bài đời sống có bản dịch), N1/NAT-TEST, thanh toán, AI: chưa làm (giai đoạn 2–3).
+- Nhập file Word, bản dịch tiếng Việt cho từng đề bài (chỉ bài đời sống có bản dịch), N1/NAT-TEST, thanh toán, AI: chưa làm (giai đoạn 2–3).
 - Chống gian lận chỉ ở mức cảnh báo (đúng như URD).
 
 ## Mở rộng đợt 2
@@ -77,7 +77,8 @@ Muốn tạo bộ đề khác: sửa mảng `rows` trong script (mỗi dòng là
 - `docs/05-trang-thai-va-viec-tiep-theo.md` – giới hạn hiện tại và backlog.
 - `docs/06-deploy-render-supabase.md` – deploy miễn phí lên Render + Supabase từng bước.
 - `docs/07-deploy-vercel-supabase.md` – deploy miễn phí lên Vercel + Supabase từng bước.
-- `docs/08-dang-nhap-email-google.md` – đăng ký/đăng nhập, quên mật khẩu qua email (Brevo), đăng nhập Google, tạo tài khoản giảng viên.
+- `docs/08-dang-nhap-email-google.md` – đăng ký/đăng nhập, quên mật khẩu qua email (Brevo), tạo tài khoản giảng viên.
 - `docs/09-lop-hoc-giao-bai.md` – lớp học: mã lớp/link mời, giao đề có hạn nộp, nhắc nộp bài, bảng điểm Excel.
 - `docs/10-tai-de-pdf-word.md` – tải đề từ PDF/Word (tự tách câu) và đề scan + phiếu trả lời.
+- `docs/11-loai-de-muc-kho.md` – 4 danh mục (Thi chuyên, JLPT, BJT, EJU), 5 mức độ khó, dạng tự luận (dịch, sửa lỗi, viết văn), giới hạn chữ.
 - `docs/goc/URD_v0.1_ban-goc.docx` – tài liệu gốc.

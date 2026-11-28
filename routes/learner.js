@@ -42,13 +42,15 @@ router.delete('/me', A.requireUser, wrap(async (req, res) => {   // quyền riê
 const examOut = (e) => {
   const secs = j(e.sections, []);
   const qids = secs.flatMap((s) => s.question_ids);
-  return { id: e.id, title: e.title, exam_type: e.exam_type, level: e.level, duration_min: e.duration_min, description: e.description,
+  return { id: e.id, title: e.title, exam_type: e.exam_type, exam_kind: e.exam_kind || 'jlpt', difficulty: e.difficulty || 0, level: e.level, duration_min: e.duration_min, description: e.description,
     sections: secs.map((s) => ({ key: s.key, name: s.name, count: s.question_ids.length })), question_count: qids.length, doc: !!e.doc_url };
 };
 router.get('/exams', wrap(async (req, res) => {
-  const { exam_type, level, section, q } = req.query;
+  const { exam_type, exam_kind, difficulty, level, section, q } = req.query;
   let rows = (await db.prepare("SELECT * FROM exams WHERE status='published' ORDER BY level DESC, id").all()).map(examOut);
   if (exam_type) rows = rows.filter((e) => e.exam_type === exam_type);
+  if (exam_kind) rows = rows.filter((e) => e.exam_kind === exam_kind);
+  if (difficulty) rows = rows.filter((e) => e.difficulty === Number(difficulty));
   if (level) rows = rows.filter((e) => e.level === level);
   if (section) rows = rows.filter((e) => e.sections.some((s) => s.key === section));
   if (q) { const n = C.normalize(q); rows = rows.filter((e) => C.normalize(e.title + ' ' + e.description).includes(n)); }
@@ -70,7 +72,7 @@ router.get('/search', wrap(async (req, res) => {
   res.json({ exams, lessons, questions: qs });
 }));
 router.get('/practice/options', wrap(async (req, res) => {
-  const rows = (await db.prepare("SELECT level, section, qtype, COUNT(*) n FROM questions WHERE status='published' AND is_sheet=0 GROUP BY level, section, qtype").all());
+  const rows = (await db.prepare("SELECT catalog, level, section, qtype, difficulty, COUNT(*) n FROM questions WHERE status='published' AND is_sheet=0 GROUP BY catalog, level, section, qtype, difficulty").all());
   res.json(rows);
 }));
 
@@ -168,16 +170,18 @@ router.post('/attempts', A.requireUser, wrap(async (req, res) => {
     questions = await loadQuestions(ids);
     title = 'Làm lại câu sai: ' + src.title.replace(/^Làm lại câu sai: /, ''); level = src.level || '';
   } else if (practice) {
-    const { level: lv, section, qtype, count, grammar } = practice;
+    const { level: lv, section, qtype, count, grammar, difficulty, catalog } = practice;
     const where = ["status='published'", 'is_sheet=0'], args = [];
     if (lv) { where.push('level=?'); args.push(lv); }
     if (section) { where.push('section=?'); args.push(section); }
     if (qtype) { where.push('qtype=?'); args.push(qtype); }
+    if (Number(difficulty)) { where.push('difficulty=?'); args.push(Number(difficulty)); }
+    if (C.EXAM_KINDS[catalog]) { where.push('catalog=?'); args.push(catalog); }
     let rows = (await db.prepare(`SELECT * FROM questions WHERE ${where.join(' AND ')}`).all(...args));
     if (grammar) rows = rows.filter((r) => (j(r.tags, {}).grammar || []).includes(grammar));
     if (!rows.length) return bad(res, 'Chưa có câu hỏi phù hợp với lựa chọn của bạn.', 404);
     questions = shuffle(rows).slice(0, Math.min(Math.max(Number(count) || 10, 1), 50)).map((r) => shuffleOptions(C.rowToQuestion(r)));
-    title = `Luyện tập: ${[lv, section ? C.SECTIONS[section] : (grammar ? '' : 'Tất cả phần'), qtype, grammar].filter(Boolean).join(' · ')}`; level = lv || '';
+    title = `Luyện tập: ${[C.EXAM_KINDS[catalog], lv, Number(difficulty) ? C.DIFFS[Number(difficulty)] : '', section ? C.SECTIONS[section] : (grammar ? '' : 'Tất cả phần'), qtype, grammar].filter(Boolean).join(' · ')}`; level = lv || '';
   } else return bad(res, 'Thiếu thông tin đề.');
   if (!questions.length) return bad(res, 'Đề chưa có câu hỏi đã duyệt.', 409);
   const kind = exam_id ? 'exam' : 'practice';
@@ -217,7 +221,7 @@ router.put('/attempts/:id/answers', A.requireUser, wrap(async (req, res) => {   
     const q = snap.questions.find((x) => String(x.id) === String(qid)); if (!q) continue;
     const cur = (answers[qid] ||= {});
     if ('c' in v && q.kind !== 'essay') cur.c = v.c === null ? null : (Number.isInteger(v.c) && v.c >= 0 && v.c < q.options.length ? v.c : cur.c);
-    if ('t' in v && q.kind === 'essay') cur.t = String(v.t ?? '').slice(0, 5000);   // bài viết tự luận
+    if ('t' in v && q.kind === 'essay') cur.t = C.clipLen(String(v.t ?? '').slice(0, 5000), q.max_len, C.lenUnit(q.etype));   // bài viết tự luận, cắt theo giới hạn chữ
     if ('flag' in v) cur.flag = !!v.flag;
   }
   const leaves = Number.isInteger(req.body?.leaves) ? Math.max(a.leaves, Math.min(req.body.leaves, 999)) : a.leaves;

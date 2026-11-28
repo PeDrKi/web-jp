@@ -1,4 +1,4 @@
-// Tài khoản: đăng ký, đăng nhập (mật khẩu / Google), đăng xuất, quên & đặt lại mật khẩu, đổi mật khẩu.
+// Tài khoản: đăng ký, đăng nhập, đăng xuất, quên & đặt lại mật khẩu, đổi mật khẩu.
 const express = require('express');
 const crypto = require('crypto');
 const { db, j, tx } = require('../lib/db');
@@ -8,10 +8,9 @@ const router = express.Router();
 const now = () => Date.now();
 const wrap = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { console.error(e); if (!res.headersSent) res.status(500).json({ error: 'Lỗi máy chủ.' }); } };
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
-const GOOGLE_ID = process.env.GOOGLE_CLIENT_ID || '';
 const DUMMY = A.hashPassword(crypto.randomBytes(8).toString('hex'));   // so sánh giả khi email không tồn tại, để thời gian phản hồi như nhau
 
-const userOut = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, goal: j(u.goal, {}), settings: j(u.settings, {}), has_password: !!u.pass_hash, google: !!u.google_sub });
+const userOut = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, goal: j(u.goal, {}), settings: j(u.settings, {}), has_password: !!u.pass_hash });
 const normEmail = (e) => String(e || '').trim().toLowerCase();
 const validEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(e) && e.length <= 160;
 const baseUrl = (req) => (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
@@ -27,7 +26,7 @@ async function makeResetLink(req, userId, hours, by = null) {
   return `${baseUrl(req)}/#/dat-lai-mat-khau?t=${tok}`;
 }
 
-router.get('/auth/config', (_req, res) => res.json({ google_client_id: GOOGLE_ID || null, email_reset: Mail.enabled }));
+router.get('/auth/config', (_req, res) => res.json({ email_reset: Mail.enabled }));
 
 router.post('/auth/register', wrap(async (req, res) => {
   const { password, name, website } = req.body || {};
@@ -55,38 +54,13 @@ router.post('/auth/login', wrap(async (req, res) => {
   const okPw = A.verifyPassword(pw, u?.pass_hash || DUMMY);
   if (!u || !okPw) {
     lim.hit();
-    if (u && !u.pass_hash && u.google_sub) return bad(res, 'Tài khoản này đăng nhập bằng Google. Bấm nút "Đăng nhập bằng Google".', 401);
+    if (u && !u.pass_hash && u.google_sub) return bad(res, 'Tài khoản này chưa có mật khẩu. Bấm "Quên mật khẩu?" để đặt mật khẩu.', 401);
     return bad(res, 'Email hoặc mật khẩu không đúng.', 401);
   }
   if (u.locked) return bad(res, 'Tài khoản đã bị khóa. Liên hệ quản trị viên.', 403);
   lim.reset();
   await signIn(res, u, req.body?.remember !== false);
   res.json(userOut(u));
-}));
-
-// Đăng nhập Google: trình duyệt nhận ID token từ Google, máy chủ hỏi lại Google để xác thực
-router.post('/auth/google', wrap(async (req, res) => {
-  if (!GOOGLE_ID) return bad(res, 'Chưa bật đăng nhập Google.', 404);
-  const cred = String(req.body?.credential || '');
-  if (!cred || cred.length > 4096) return bad(res, 'Thiếu thông tin đăng nhập Google.');
-  let info;
-  try {
-    const r = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(cred));
-    info = r.ok ? await r.json() : null;
-  } catch (e) { console.error(e.message); return bad(res, 'Không kết nối được Google, thử lại sau.', 502); }
-  if (!info || info.aud !== GOOGLE_ID || !['accounts.google.com', 'https://accounts.google.com'].includes(info.iss) || Number(info.exp) * 1000 < now()) return bad(res, 'Đăng nhập Google không hợp lệ.', 401);
-  if (String(info.email_verified) !== 'true') return bad(res, 'Email Google chưa được xác minh.', 401);
-  const em = normEmail(info.email);
-  let u = await db.prepare('SELECT * FROM users WHERE google_sub=?').get(info.sub) || await db.prepare('SELECT * FROM users WHERE email=?').get(em);
-  if (u && u.locked) return bad(res, 'Tài khoản đã bị khóa. Liên hệ quản trị viên.', 403);
-  if (u && !u.google_sub) await db.prepare('UPDATE users SET google_sub=? WHERE id=?').run(info.sub, u.id);   // email trùng: liên kết vào tài khoản sẵn có
-  if (!u) {
-    const r = await db.prepare("INSERT INTO users(email,name,pass_hash,google_sub,created_at) VALUES(?,?,'',?,?)").run(em, String(info.name || em.split('@')[0]).slice(0, 60), info.sub, now());
-    u = await db.prepare('SELECT * FROM users WHERE id=?').get(r.lastInsertRowid);
-    u.is_new = true;
-  }
-  await signIn(res, u);
-  res.json({ ...userOut(u), is_new: !!u.is_new });
 }));
 
 router.post('/auth/logout', (_req, res) => { A.clearCookie(res); res.json({ ok: true }); });
@@ -138,7 +112,7 @@ router.post('/auth/reset', wrap(async (req, res) => {
   res.json(userOut(u));
 }));
 
-// Đổi mật khẩu khi đang đăng nhập (tài khoản Google chưa có mật khẩu thì không cần mật khẩu cũ)
+// Đổi mật khẩu khi đang đăng nhập (tài khoản chưa có mật khẩu thì không cần mật khẩu cũ)
 router.post('/me/password', A.requireUser, wrap(async (req, res) => {
   const u = req.user;
   const lim = A.limiter('pw|' + u.id, 8, 600e3);

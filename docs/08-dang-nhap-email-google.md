@@ -1,4 +1,6 @@
-# Đăng ký, đăng nhập, quên mật khẩu, đăng nhập Google
+# Đăng ký, đăng nhập, quên mật khẩu
+
+Đăng nhập bằng Google đã được bỏ (2026-11-28). Tài khoản từng đăng nhập bằng Google mà chưa có mật khẩu thì dùng "Quên mật khẩu?" (hoặc quản trị viên cấp link đặt lại mật khẩu) để đặt mật khẩu.
 
 ## Có sẵn, không cần cấu hình
 - **Đăng ký** bằng email và mật khẩu. Mật khẩu cần ít nhất 8 ký tự, có cả chữ và số. Người dùng phải nhập lại mật khẩu, có nút Hiện/Ẩn và thanh báo độ mạnh. Có ô bẫy chống bot, và mỗi địa chỉ IP được tạo tối đa 50 tài khoản/giờ.
@@ -30,23 +32,3 @@ Chưa bật thì trang Quên mật khẩu sẽ hướng dẫn người dùng li�
 5. Thử: đăng xuất, bấm **Quên mật khẩu?**, rồi nhập email của bạn. Thư có thể nằm trong mục Spam/Quảng cáo ở những lần đầu.
 
 Link trong email lấy theo địa chỉ web đang chạy. Nếu dùng tên miền riêng mà link vẫn ra địa chỉ `onrender.com`, thêm biến `APP_URL=https://ten-mien-cua-ban`.
-
-## Bật "Đăng nhập bằng Google" (miễn phí)
-1. Vào https://console.cloud.google.com, đăng nhập Google, rồi tạo project mới (ví dụ `web-jp`).
-2. Mở menu **APIs & Services** (hoặc **Google Auth Platform**) → **OAuth consent screen**.
-   - Chọn **External**.
-   - Điền tên ứng dụng và email hỗ trợ, rồi lưu.
-   - Ở mục Audience/Publishing status, bấm **Publish app** để mọi người dùng được, không chỉ tài khoản thử nghiệm.
-3. Vào **Credentials** (hoặc **Clients**) → **Create credentials** → **OAuth client ID**.
-   - Application type: **Web application**.
-   - **Authorized JavaScript origins**: thêm `https://web-jp-pe86.onrender.com`, cộng `http://localhost:3000` nếu muốn thử trên máy. Thêm cả tên miền riêng nếu có.
-   - Không cần điền Redirect URI.
-4. Sao chép **Client ID** (dạng `1234-abc.apps.googleusercontent.com`). Trên Render → **Environment**, thêm `GOOGLE_CLIENT_ID` = Client ID đó, rồi Save.
-5. Trang Đăng nhập và Đăng ký sẽ hiện nút **Tiếp tục với Google**.
-
-Cách hệ thống xử lý tài khoản Google:
-- Lần đầu đăng nhập Google, hệ thống tự tạo tài khoản học viên.
-- Nếu email Google trùng với một tài khoản đã có, Google được liên kết vào tài khoản đó.
-- Người dùng Google có thể đặt thêm mật khẩu trong Cài đặt để đăng nhập bằng email.
-
-Client ID không phải thông tin bí mật. Không có "Client secret" nào cần điền vào hệ thống.

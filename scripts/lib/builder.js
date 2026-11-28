@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
 
-const COLS = ['kind', 'level', 'section', 'qtype', 'stem', 'passage', 'option1', 'option2', 'option3', 'option4', 'answer', 'explanation', 'model_answer', 'accepted', 'points', 'grammar', 'kanji', 'situation', 'audio_script'];
+const COLS = ['kind', 'level', 'section', 'qtype', 'stem', 'passage', 'option1', 'option2', 'option3', 'option4', 'answer', 'explanation', 'model_answer', 'accepted', 'points', 'grammar', 'kanji', 'situation', 'audio_script', 'difficulty', 'etype', 'max_len'];
 const NAMES = { vocab: 'Văn tự - từ vựng', conversation: 'Hội thoại và biểu hiện', grammar: 'Ngữ pháp', reading: 'Đọc hiểu', listening: 'Nghe hiểu', writing: 'Viết / Tự luận' };
 const SCORING = {
   N5: { groups: [{ key: 'language', name: 'Kiến thức ngôn ngữ + Đọc hiểu', sections: ['vocab', 'grammar', 'reading'], max: 120, min: 38 }, { key: 'listening', name: 'Nghe hiểu', sections: ['listening'], max: 60, min: 19 }], total_pass: 80 },
@@ -26,10 +26,10 @@ function check(rows) {
   return errs;
 }
 // parts (tùy chọn): chia đề theo phần của bản in [{ key, name, from, to }] (chỉ số dòng); mặc định chia theo phần thi.
-async function run({ file, rows, level = 'N5', title, minutes, description, scoring, parts, exam_type = 'JLPT' }) {
+async function run({ file, rows, level = 'N5', title, minutes, description, scoring, parts, exam_type = 'JLPT', exam_kind, difficulty = 0 }) {
   const errs = check(rows); if (errs.length) { console.error(errs.join('\n')); process.exit(1); }
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  rows = rows.map((r) => ({ kind: 'mcq', model_answer: '', accepted: '', points: '', ...r }));
+  rows = rows.map((r) => ({ kind: 'mcq', model_answer: '', accepted: '', points: '', difficulty, etype: '', max_len: '', ...r }));
   const csv = '﻿' + COLS.join(',') + '\n' + rows.map((r) => COLS.map((c) => q(r[c])).join(',')).join('\n') + '\n';
   const out = path.join(__dirname, '..', '..', 'output'); fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, file + '.csv'), csv);
@@ -60,7 +60,7 @@ async function run({ file, rows, level = 'N5', title, minutes, description, scor
     const sections = parts ? parts.map((p) => ({ key: p.key, name: p.name, question_ids: imp.ids.slice(p.from, p.to) }))
       : ['vocab', 'conversation', 'grammar', 'reading', 'listening', 'writing'].filter((k) => byId[k]).map((k) => ({ key: k, name: NAMES[k], question_ids: byId[k] }));
     const sc = scoring || { ...SCORING[level], note: 'Điểm quy đổi theo tỷ lệ câu đúng (mô phỏng); kỳ thi thật dùng thang tương đương hóa.' };
-    const ex = await call('POST', '/admin/exams', { title: TITLE, exam_type, level, duration_min: MIN, description, sections, scoring: sc });
+    const ex = await call('POST', '/admin/exams', { title: TITLE, exam_type, exam_kind: exam_kind || (rows.some((r) => r.kind === 'essay') ? 'chuyen' : 'jlpt'), difficulty, level, duration_min: MIN, description, sections, scoring: sc });
     console.log(`Đã tạo đề #${ex.id}: ${TITLE}`);
     if (has('draft')) { console.log('Giữ ở trạng thái nháp (--draft).'); return; }
     for (const id of imp.ids) { await call('POST', `/admin/questions/${id}/status`, { status: 'pending' }); await call('POST', `/admin/questions/${id}/status`, { status: 'published' }); }

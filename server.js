@@ -55,9 +55,18 @@ async function autoSeed() {
   console.log('CSDL trống, đang nạp dữ liệu mẫu...');
   await new Promise((ok, fail) => require('child_process').execFile(process.execPath, [require('path').join(__dirname, 'seed', 'seed.js')], { env: process.env }, (e, out, err) => { console.log(out); if (e) { console.error(err); fail(e); } else ok(); }));
 }
+// Khóa Brevo tự hết hạn nếu 90 ngày không dùng: gửi 1 thư ngắn tới MAIL_FROM lúc khởi động và mỗi 20 ngày.
+// shortcut: mỗi lần khởi động lại (cập nhật web) cũng gửi 1 thư; lỗi nếu có chỉ ghi log. Muốn tắt: MAIL_KEEPALIVE=0.
+function keepMailKey() {
+  const Mail = require('./lib/mail');
+  if (!Mail.enabled || process.env.MAIL_KEEPALIVE === '0') return;
+  const ping = () => Mail.send(process.env.MAIL_FROM, 'Giữ khóa email hoạt động', '<p>Thư tự động mỗi 20 ngày để khóa Brevo không bị hết hạn vì lâu không dùng. Bạn không cần làm gì.</p>').catch((e) => console.error('mail keepalive:', e.message));
+  ping(); setInterval(ping, 20 * 24 * 3600e3).unref();
+}
 if (require.main === module) {
   const { ready, file } = require('./lib/db');
   ready.then(autoSeed).then(() => app.listen(PORT, () => console.log(`Web luyện đề tiếng Nhật chạy tại http://localhost:${PORT} · CSDL: ${file}`)))
+    .then(() => keepMailKey())
     .catch(() => process.exit(1));
 }
 module.exports = app;

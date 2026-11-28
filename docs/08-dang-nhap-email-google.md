@@ -32,3 +32,6 @@ Chưa bật thì trang Quên mật khẩu sẽ hướng dẫn người dùng li�
 5. Thử: đăng xuất, bấm **Quên mật khẩu?**, rồi nhập email của bạn. Thư có thể nằm trong mục Spam/Quảng cáo ở những lần đầu.
 
 Link trong email lấy theo địa chỉ web đang chạy. Nếu dùng tên miền riêng mà link vẫn ra địa chỉ `onrender.com`, thêm biến `APP_URL=https://ten-mien-cua-ban`.
+
+## Giữ khóa Brevo không hết hạn
+Brevo tự hủy khóa API nếu 90 ngày không dùng, và khóa có hạn tối đa theo mục Expiry khi tạo. Để tránh, web tự gửi một thư ngắn tới `MAIL_FROM` mỗi lần khởi động và mỗi 20 ngày (1 thư, rất nhỏ so với 300 thư/ngày). Tắt bằng biến `MAIL_KEEPALIVE=0`. Khi khóa đến hạn (xem cột Expires on ở Brevo → SMTP & API), tạo khóa mới và dán lại vào Render.
